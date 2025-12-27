@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "WinRARRed": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}
