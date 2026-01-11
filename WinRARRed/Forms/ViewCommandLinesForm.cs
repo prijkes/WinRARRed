@@ -51,6 +51,7 @@ namespace WinRARRed.Forms
                         // Filter arguments by RAR version and RAR archive version
                         IEnumerable<string> filteredArguments = commandLineArguments.Where(
                                 a => version >= a.MinimumVersion &&
+                                (!a.MaximumVersion.HasValue || version <= a.MaximumVersion.Value) &&
                                 (!a.ArchiveVersion.HasValue || a.ArchiveVersion.Value.HasFlag(archiveVersion))
                             ).Select(a => a.Argument);
 
@@ -61,9 +62,9 @@ namespace WinRARRed.Forms
                                 CheckState.Indeterminate => "attrib +A /S * && ",
                                 _ => string.Empty
                             };
-                            string fileAttributeI = options.RAROptions.SetFileArchiveAttribute switch
+                            string fileAttributeI = options.RAROptions.SetFileNotContentIndexedAttribute switch
                             {
-                                CheckState.Checked => (a == 0 ? "attrib +I /S * && " : "attrib -I /S * && "),
+                                CheckState.Checked => (b == 0 ? "attrib +I /S * && " : "attrib -I /S * && "),
                                 CheckState.Indeterminate => "attrib +I /S * && ",
                                 _ => string.Empty
                             };

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,7 +39,11 @@ namespace WinRARRed
 
         private readonly CancellationTokenSource CancellationTokenSource = new();
 
-        [GeneratedRegex("(?:win)?(?:rar|wr)(?:-x64|-x32)?-?(\\d+)(?:b\\d+)?", RegexOptions.IgnoreCase, "ja-JP")]
+        private readonly Dictionary<RARProcess, StreamWriter> ProcessLogWriters = [];
+        private readonly HashSet<RARProcess> ActiveProcesses = [];
+        private readonly object ProcessLock = new();
+
+        [GeneratedRegex("(?:win)?(?:rar|wr)(?:-x64|-x32)?-?(\\d+)(?:b\\d+)?", RegexOptions.IgnoreCase)]
         private static partial Regex GeneratedRARVersionRegex();
         private readonly static Regex RARVersionRegex = GeneratedRARVersionRegex();
 
@@ -93,7 +98,7 @@ namespace WinRARRed
             DateTime startDateTime = DateTime.Now;
 
             string[] rarFiles = Directory.GetFiles(inputDirectory, "*.*");
-            for ( int i = 0; i < rarFiles.Length; i++)
+            for (int i = 0; i < rarFiles.Length; i++)
             {
                 if (CancellationTokenSource.IsCancellationRequested)
                 {
@@ -124,6 +129,7 @@ namespace WinRARRed
 
         public async Task<bool> BruteForceRARVersionAsync(BruteForceOptions options)
         {
+            Log.Information(this, $"Starting brute force operation. Release: {options.ReleaseDirectoryPath}, Output: {options.OutputDirectoryPath}");
             BruteForceOptions = options;
 
             DateTime bruteForceStartDateTime = DateTime.Now;
@@ -132,16 +138,20 @@ namespace WinRARRed
             FireBruteForceStatusChanged(status);
 
             string[] rarVersionDirectories = Directory.GetDirectories(options.RARInstallationsDirectoryPath);
-            if (!rarVersionDirectories.Any())
+            Log.Debug(this, $"Found {rarVersionDirectories.Length} RAR version directories in {options.RARInstallationsDirectoryPath}");
+
+            if (rarVersionDirectories.Length == 0)
             {
-                Log.Write(this, "No RAR executables found in WinRAR directory or sub directories");
+                Log.Warning(this, "No RAR executables found in WinRAR directory or sub directories");
                 return false;
             }
+
+            string inputFilesDir = PrepareInputDirectory(options);
 
             int totalProgressSize = CalculateBruteForceProgressSize(options);
             int currentProgress = 0;
 
-            DirectoryInfo directoryInfo = new(options.ReleaseDirectoryPath);
+            DirectoryInfo directoryInfo = new(inputFilesDir);
             FileInfo[] fileInfos = directoryInfo.GetFiles("*.*", SearchOption.AllDirectories);
 
             // Save file attributes
@@ -158,20 +168,12 @@ namespace WinRARRed
                     if (a == 0)
                     {
                         // Set archive attribute on first run
-                        foreach (FileInfo fileInfo in fileInfos)
-                        {
-                            fileInfo.Attributes |= FileAttributes.Archive;
-                            Log.Write(this, $"Added {nameof(FileAttributes.Archive)} attribute to {fileInfo}");
-                        }
+                        SetFileAttributes(fileInfos, FileAttributes.Archive, true);
                     }
                     else
                     {
                         // Remove archive attribute on second run
-                        foreach (FileInfo fileInfo in fileInfos)
-                        {
-                            fileInfo.Attributes &= ~FileAttributes.Archive;
-                            Log.Write(this, $"Removed {nameof(FileAttributes.Archive)} attribute from {fileInfo}");
-                        }
+                        SetFileAttributes(fileInfos, FileAttributes.Archive, false);
                     }
                 }
 
@@ -182,129 +184,32 @@ namespace WinRARRed
                         if (b == 0)
                         {
                             // Set not content indexed attribute on first run
-                            foreach (FileInfo fileInfo in fileInfos)
-                            {
-                                fileInfo.Attributes |= FileAttributes.NotContentIndexed;
-                                Log.Write(this, $"Added {nameof(FileAttributes.NotContentIndexed)} attribute to {fileInfo}");
-                            }
+                            SetFileAttributes(fileInfos, FileAttributes.NotContentIndexed, true);
                         }
                         else
                         {
                             // Remove not content indexed attribute on second run
-                            foreach (FileInfo fileInfo in fileInfos)
-                            {
-                                fileInfo.Attributes &= ~FileAttributes.NotContentIndexed;
-                                Log.Write(this, $"Removed {nameof(FileAttributes.NotContentIndexed)} attribute from {fileInfo}");
-                            }
+                            SetFileAttributes(fileInfos, FileAttributes.NotContentIndexed, false);
                         }
                     }
 
-                    for (int i = 0; i < rarVersionDirectories.Length && !found; i++)
+                    var validRarDirectories = GetValidRarDirectories(rarVersionDirectories, options);
+
+                    foreach (var (rarVersionDirectoryPath, version) in validRarDirectories)
                     {
-                        string rarVersionDirectoryPath = rarVersionDirectories[i];
                         if (CancellationTokenSource.IsCancellationRequested)
                         {
                             break;
                         }
 
-                        string rarExeFilePath = Path.Combine(rarVersionDirectoryPath, "rar.exe");
-                        if (!File.Exists(rarExeFilePath))
+                        var (foundCombination, newProgress) = await TryProcessCommandLinesAsync(options, version, rarVersionDirectoryPath, inputFilesDir, totalProgressSize, currentProgress, bruteForceStartDateTime, fileHashes, a, b);
+                        currentProgress = newProgress;
+                        if (foundCombination)
                         {
-                            Log.Write(this, $"rar.exe not found in {rarVersionDirectoryPath}");
-                            continue;
-                        }
-
-                        string rarVersionDirectoryName = Path.GetFileName(rarVersionDirectoryPath);
-                        int version = ParseRARVersion(rarVersionDirectoryName);
-                        if (!options.RAROptions.RARVersions.Any(r => r.InRange(version)))
-                        {
-                            continue;
-                        }
-
-                        for (int j = 0; j < options.RAROptions.CommandLineArguments.Count; j++)
-                        {
-                            RARCommandLineArgument[] commandLineArguments = options.RAROptions.CommandLineArguments[j];
-                            if (CancellationTokenSource.IsCancellationRequested)
-                            {
-                                break;
-                            }
-
-                            RARArchiveVersion archiveVersion = ParseRARArchiveVersion(commandLineArguments, version);
-
-                            // Filter arguments by RAR version and RAR archive version
-                            IEnumerable<string> filteredArguments = commandLineArguments.Where(
-                                a => version >= a.MinimumVersion &&
-                                (!a.ArchiveVersion.HasValue || a.ArchiveVersion.Value.HasFlag(archiveVersion))
-                            ).Select(a => a.Argument);
-
-                            string joinedArguments = string.Join("", filteredArguments);
-                            string archiveAttribute = options.RAROptions.SetFileArchiveAttribute != CheckState.Unchecked && a == 0 ? "archived-" : string.Empty;
-                            string notContentIndexedAttribute = options.RAROptions.SetFileNotContentIndexedAttribute != CheckState.Unchecked && a == 0 ? "notcontentindexed-" : string.Empty;
-                            string rarFilePath = Path.Combine(options.OutputDirectoryPath, $"{archiveAttribute}{notContentIndexedAttribute}{rarVersionDirectoryName}-{joinedArguments}.rar");
-                            if (File.Exists(rarFilePath))
-                            {
-                                // Throw error? Overwrite?
-                                continue;
-                            }
-
-                            FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
-
-                            await RARCompressDirectoryAsync(rarExeFilePath, options.ReleaseDirectoryPath, rarFilePath, filteredArguments, CancellationTokenSource.Token);
-
-                            currentProgress++;
-                            FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
-
-                            if (!File.Exists(rarFilePath))
-                            {
-                                continue;
-                            }
-
-                            string hash = options.HashType switch
-                            {
-                                HashType.SHA1 => SHA1.Calculate(rarFilePath),
-                                HashType.CRC32 => CRC32.Calculate(rarFilePath),
-                                _ => throw new IndexOutOfRangeException(nameof(options.HashType))
-                            };
-
-                            Log.Write(this, $"Hash for {rarFilePath}: {hash} (match: {options.Hashes.Contains(hash)})");
-
-                            bool deleteFile = options.RAROptions.DeleteRARFiles || fileHashes.Contains(hash);
-                            if (!fileHashes.Contains(hash))
-                            {
-                                fileHashes.Add(hash);
-                            }
-
-                            if (!options.Hashes.Contains(hash))
-                            {
-                                if (deleteFile)
-                                {
-                                    try
-                                    {
-                                        File.Delete(rarFilePath);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Log.Write(this, $"Failed to delete RAR file: {rarFilePath}{Environment.NewLine}{ex.Message}");
-                                    }
-                                }
-
-                                continue;
-                            }
-
-                            string releaseName = Path.GetFileName(options.ReleaseDirectoryPath);
-                            string releaseRarFileName = $"{releaseName}.rar";
-                            string releaseRarFilePath = Path.Combine(options.RARInstallationsDirectoryPath, releaseRarFileName);
-                            if (!File.Exists(releaseRarFilePath))
-                            {
-                                File.Move(rarFilePath, releaseRarFilePath);
-                            }
-
-                            string rarVersion = Path.GetFileName(rarVersionDirectoryPath);
-                            Log.Write(this, $"Found RAR version: {rarVersion}{Environment.NewLine}Command line: {joinedArguments}{Environment.NewLine}File: {releaseRarFilePath}");
-
                             found = true;
                             break;
                         }
+
                     }
                 }
             }
@@ -326,7 +231,17 @@ namespace WinRARRed
 
         public void Stop()
         {
+            Log.Information(this, "Stopping brute force operation and cancelling all RAR processes");
             CancellationTokenSource.Cancel();
+            
+            // CliWrap will automatically kill processes when the cancellation token is cancelled
+            // The processes will clean themselves up in Process_ProcessStatusChanged
+            
+            lock (ProcessLock)
+            {
+                Log.Information(this, $"Active processes count: {ActiveProcesses.Count}");
+                ActiveProcesses.Clear();
+            }
         }
 
         private static int CalculateBruteForceProgressSize(BruteForceOptions options)
@@ -361,6 +276,7 @@ namespace WinRARRed
                             // Filter arguments by RAR version and RAR archive version
                             IEnumerable<string> filteredArguments = commandLineArguments.Where(
                                 a => version >= a.MinimumVersion &&
+                                (!a.MaximumVersion.HasValue || version <= a.MaximumVersion.Value) &&
                                 (!a.ArchiveVersion.HasValue || a.ArchiveVersion.Value.HasFlag(archiveVersion))
                             ).Select(a => a.Argument);
 
@@ -383,12 +299,94 @@ namespace WinRARRed
 
         private async Task<int> RARCompressDirectoryAsync(string rarExeFilePath, string inputDirectory, string outputFilePath, IEnumerable<string> commandLineOptions, CancellationToken cancellationToken)
         {
-            using RARProcess process = new(rarExeFilePath, inputDirectory, outputFilePath, commandLineOptions);
+            RARProcess process = new(rarExeFilePath, inputDirectory, outputFilePath, commandLineOptions);
+
+            // Initialize streaming log writer for this process
+            if (BruteForceOptions != null)
+            {
+                // Create log file path
+                string logsDir = Path.Combine(BruteForceOptions.OutputDirectoryPath, "logs");
+                Directory.CreateDirectory(logsDir);
+
+                string logFileName = $"{Path.GetFileNameWithoutExtension(outputFilePath)}_{DateTime.Now:yyyyMMdd_HHmmss}.log";
+                string logFilePath = Path.Combine(logsDir, logFileName);
+
+                // Open StreamWriter with AutoFlush enabled for immediate writes
+                StreamWriter writer = new(logFilePath, append: false)
+                {
+                    AutoFlush = true
+                };
+                ProcessLogWriters[process] = writer;
+                
+                Log.Write(this, $"Opened log file for streaming: {logFilePath}");
+            }
+
             process.ProcessStatusChanged += Process_ProcessStatusChanged;
             process.ProcessOutput += Process_ProcessOutput;
             process.CompressionStatusChanged += Process_CompressionStatusChanged;
             process.CompressionProgress += Process_CompressionProgress;
-            return await process.RunAsync(cancellationToken);
+            
+            // Create a linked cancellation token for early termination
+            using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            
+            // Start monitoring for second volume (for early termination optimization)
+            Task monitorTask = MonitorForSecondVolumeAsync(outputFilePath, linkedCts);
+            
+            // Run the RAR process
+            Task<int> processTask = process.RunAsync(linkedCts.Token);
+            
+            // Wait for either process completion or early termination
+            await Task.WhenAny(processTask, monitorTask);
+            
+            // If monitoring detected second volume, cancel the process
+            if (monitorTask.IsCompleted && !processTask.IsCompleted)
+            {
+                Log.Debug(this, $"Second volume detected, terminating RAR process early for: {outputFilePath}");
+                linkedCts.Cancel();
+                // Wait a bit for graceful cancellation
+                await Task.WhenAny(processTask, Task.Delay(1000));
+            }
+            
+            // Return the exit code if available, otherwise return success (0) since we terminated early
+            return processTask.IsCompleted ? await processTask : 0;
+        }
+
+        private async Task MonitorForSecondVolumeAsync(string expectedRarFilePath, CancellationTokenSource cts)
+        {
+            try
+            {
+                string directory = Path.GetDirectoryName(expectedRarFilePath) ?? string.Empty;
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(expectedRarFilePath);
+                
+                // Determine which second volume filename to look for
+                // Check .part02.rar (zero-padded)
+                string secondVolumePart02 = Path.Combine(directory, $"{fileNameWithoutExtension}.part02.rar");
+                // Check .part2.rar (non-padded)
+                string secondVolumePart2 = Path.Combine(directory, $"{fileNameWithoutExtension}.part2.rar");
+                // Check .r00 (old format)
+                string secondVolumeR00 = Path.Combine(directory, $"{fileNameWithoutExtension}.r00");
+                
+                // Poll for second volume existence
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    if (File.Exists(secondVolumePart02) || File.Exists(secondVolumePart2) || File.Exists(secondVolumeR00))
+                    {
+                        // Second volume detected! Return to trigger early termination
+                        return;
+                    }
+                    
+                    // Wait a bit before checking again (100ms polling interval)
+                    await Task.Delay(100, cts.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal cancellation, ignore
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(this, $"Error monitoring for second volume: {ex.Message}");
+            }
         }
 
         private async Task<bool> ExtractRARFileAsync(string file, string outputDirectory, CancellationToken cancellationToken)
@@ -430,6 +428,29 @@ namespace WinRARRed
             }
 
             RARProcessStatusChanged?.Invoke(this, new(process, e.OldStatus, e.NewStatus, e.CompletionStatus));
+
+            // When process completes, close and dispose the log writer
+            if (e.NewStatus == OperationStatus.Completed)
+            {
+                if (ProcessLogWriters.TryGetValue(process, out StreamWriter? writer))
+                {
+                    try
+                    {
+                        writer.Close();
+                        writer.Dispose();
+                        Log.Write(this, $"Process log file closed");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to close process log writer: {ex.Message}");
+                    }
+                    finally
+                    {
+                        // Clean up tracking dictionary
+                        ProcessLogWriters.Remove(process);
+                    }
+                }
+            }
         }
 
         private void Process_ProcessOutput(object? sender, ProcessDataEventArgs e)
@@ -437,6 +458,20 @@ namespace WinRARRed
             if (sender is not RARProcess process)
             {
                 return;
+            }
+
+            // Stream output directly to log file (auto-flushed)
+            if (ProcessLogWriters.TryGetValue(process, out StreamWriter? writer))
+            {
+                try
+                {
+                    writer.WriteLine(e.Data);
+                    // AutoFlush is enabled, so data is immediately written to disk
+                }
+                catch (Exception ex)
+                {
+                    Log.Write(this, $"Failed to write to process log: {ex.Message}");
+                }
             }
 
             RARProcessOutput?.Invoke(this, new(process, e.Data));
@@ -460,38 +495,6 @@ namespace WinRARRed
             }
 
             RARCompressionProgress?.Invoke(this, new(process, e.OperationSize, e.OperationProgressed, e.StartDateTime));
-
-            if (BruteForceOptions == null || e.OperationRemaining > 0)
-            {
-                return;
-            }
-
-            // Calculate hash for the current compressed file
-            string hash = BruteForceOptions.HashType switch
-            {
-                HashType.SHA1 => SHA1.Calculate(e.CompressedFilePath),
-                HashType.CRC32 => CRC32.Calculate(e.CompressedFilePath),
-                _ => throw new IndexOutOfRangeException(nameof(BruteForceOptions.HashType))
-            };
-
-            // See if the hash for the current file is known
-            if (!BruteForceOptions.Hashes.Contains(hash))
-            {
-                if (BruteForceOptions.RAROptions.DeleteRARFiles)
-                {
-                    try
-                    {
-                        File.Delete(e.CompressedFilePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Write(this, $"Failed to delete RAR file: {e.CompressedFilePath}{Environment.NewLine}{ex.Message}");
-                    }
-                }
-
-                // Hash for the current file is not known; no need to compress any more files for the current input
-                e.Cancel();
-            }
         }
 
         private void RarFile_ExtractionProgress(object? sender, OperationProgressEventArgs e)
@@ -518,5 +521,549 @@ namespace WinRARRed
 
         private void FireBruteForceStatusChanged(BruteForceStatusChangedEventArgs e)
             => BruteForceStatusChanged?.Invoke(this, e);
+
+        private void SetFileAttributes(IEnumerable<FileInfo> files, FileAttributes attribute, bool add)
+        {
+            foreach (FileInfo fileInfo in files)
+            {
+                if (add)
+                {
+                    fileInfo.Attributes |= attribute;
+                    Log.Write(this, $"Added {attribute} attribute to {fileInfo}");
+                }
+                else
+                {
+                    fileInfo.Attributes &= ~attribute;
+                    Log.Write(this, $"Removed {attribute} attribute from {fileInfo}");
+                }
+            }
+        }
+
+        private List<(string Path, int Version)> GetValidRarDirectories(string[] directories, BruteForceOptions options)
+        {
+            var validDirectories = new List<(string Path, int Version)>();
+
+            foreach (var dir in directories)
+            {
+                string rarExeFilePath = Path.Combine(dir, "rar.exe");
+                if (!File.Exists(rarExeFilePath))
+                {
+                    Log.Write(this, $"rar.exe not found in {dir}");
+                    continue;
+                }
+
+                string dirName = Path.GetFileName(dir);
+                int version = ParseRARVersion(dirName);
+
+                if (options.RAROptions.RARVersions.Any(r => r.InRange(version)))
+                {
+                    validDirectories.Add((dir, version));
+                }
+            }
+
+            return validDirectories;
+        }
+
+
+        private async Task<(bool Found, int NewProgress)> TryProcessCommandLinesAsync(
+            BruteForceOptions options,
+            int version,
+            string rarVersionDirectoryPath,
+            string inputFilesDir,
+            int totalProgressSize,
+            int currentProgress,
+            DateTime bruteForceStartDateTime,
+            HashSet<string> fileHashes,
+            int archiveAttributeIteration,
+            int notContentAttributeIteration)
+        {
+            string rarExeFilePath = Path.Combine(rarVersionDirectoryPath, "rar.exe");
+            string rarVersionDirectoryName = Path.GetFileName(rarVersionDirectoryPath);
+
+            // Create subdirectory structure:
+            // - inputFilesDir: Contains copy of input files (working directory for RAR)
+            // - rarOutputDir: Contains generated RAR files
+            string rarOutputDir = Path.Combine(options.OutputDirectoryPath, "output");
+
+            Log.Debug(this, $"Input files directory: {inputFilesDir}");
+            Log.Debug(this, $"RAR output directory: {rarOutputDir}");
+
+            if (!Directory.Exists(rarOutputDir))
+            {
+                Directory.CreateDirectory(rarOutputDir);
+            }
+
+            for (int j = 0; j < options.RAROptions.CommandLineArguments.Count; j++)
+            {
+                RARCommandLineArgument[] commandLineArguments = options.RAROptions.CommandLineArguments[j];
+                if (CancellationTokenSource.IsCancellationRequested)
+                {
+                    return (false, currentProgress);
+                }
+
+                RARArchiveVersion archiveVersion = ParseRARArchiveVersion(commandLineArguments, version);
+
+                // Filter arguments by RAR version and RAR archive version
+                IEnumerable<string> filteredArguments = commandLineArguments.Where(
+                    a => version >= a.MinimumVersion &&
+                    (!a.MaximumVersion.HasValue || version <= a.MaximumVersion.Value) &&
+                    (!a.ArchiveVersion.HasValue || a.ArchiveVersion.Value.HasFlag(archiveVersion))
+                ).Select(a => a.Argument);
+
+                string joinedArguments = string.Join("", filteredArguments);
+                string archiveAttribute = options.RAROptions.SetFileArchiveAttribute != CheckState.Unchecked && archiveAttributeIteration == 0 ? "archived-" : string.Empty;
+                string notContentIndexedAttribute = options.RAROptions.SetFileNotContentIndexedAttribute != CheckState.Unchecked && notContentAttributeIteration == 0 ? "notcontentindexed-" : string.Empty;
+                // Output RAR file to the rarOutputDir subdirectory
+                string rarFilePath = Path.Combine(rarOutputDir, $"{archiveAttribute}{notContentIndexedAttribute}{rarVersionDirectoryName}-{joinedArguments}.rar");
+
+                if (File.Exists(rarFilePath))
+                {
+                    // Throw error? Overwrite?
+                    Log.Debug(this, $"RAR file already exists, skipping: {rarFilePath}");
+                    continue;
+                }
+
+                FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
+
+                // Run RAR with inputFilesDir as working directory, output to rarOutputDir
+                await RARCompressDirectoryAsync(rarExeFilePath, inputFilesDir, rarFilePath, filteredArguments, CancellationTokenSource.Token);
+
+                currentProgress++;
+                FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
+
+                // Check if RAR file or volume files were created
+                string? actualRarFilePath = FindCreatedRARFile(rarFilePath);
+                if (actualRarFilePath == null)
+                {
+                    Log.Write(this, $"RAR file was not created: {rarFilePath}");
+                    continue;
+                }
+
+                // Log what file was actually created (may be different from expected if volumes were created)
+                if (actualRarFilePath != rarFilePath)
+                {
+                    Log.Debug(this, $"Actual file created: {actualRarFilePath} (expected: {Path.GetFileName(rarFilePath)})");
+                }
+
+                string hash = options.HashType switch
+                {
+                    HashType.SHA1 => SHA1.Calculate(actualRarFilePath),
+                    HashType.CRC32 => CRC32.Calculate(actualRarFilePath),
+                    _ => throw new IndexOutOfRangeException(nameof(options.HashType))
+                };
+
+                Log.Write(this, $"Hash for {actualRarFilePath}: {hash} (match: {options.Hashes.Contains(hash)})");
+
+                // Track if we've seen this hash before (to avoid creating duplicates)
+                bool isDuplicateHash = fileHashes.Contains(hash);
+                fileHashes.Add(hash);
+
+                if (!options.Hashes.Contains(hash))
+                {
+                    if (options.RAROptions.DeleteRARFiles)
+                    {
+                        // Delete all volumes including first
+                        DeleteRARFileAndVolumes(actualRarFilePath);
+                    }
+                    else
+                    {
+                        // Keep first volume but delete extra volumes to save space
+                        DeleteExtraVolumes(actualRarFilePath);
+                    }
+
+                    continue;
+                }
+
+                string releaseName = Path.GetFileName(options.ReleaseDirectoryPath);
+                string releaseRarFileName = $"{releaseName}.rar";
+                string releaseRarFilePath = Path.Combine(options.RARInstallationsDirectoryPath, releaseRarFileName);
+                if (!File.Exists(releaseRarFilePath))
+                {
+                    File.Move(actualRarFilePath, releaseRarFilePath);
+                }
+
+                return (true, currentProgress);
+            }
+
+            return (false, currentProgress);
+        }
+
+        private static string? FindCreatedRARFile(string expectedRarFilePath)
+        {
+            // Check if the expected file exists (non-volume case)
+            if (File.Exists(expectedRarFilePath))
+            {
+                return expectedRarFilePath;
+            }
+
+            // Check for volume files
+            string directory = Path.GetDirectoryName(expectedRarFilePath) ?? string.Empty;
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(expectedRarFilePath);
+
+            // Check for RAR5 volume format with zero-padded numbers: filename.part01.rar, filename.part02.rar, etc.
+            string part01File = Path.Combine(directory, $"{fileNameWithoutExtension}.part01.rar");
+            if (File.Exists(part01File))
+            {
+                return part01File;
+            }
+
+            // Check for RAR5 volume format without zero-padding: filename.part1.rar, filename.part2.rar, etc.
+            string part1File = Path.Combine(directory, $"{fileNameWithoutExtension}.part1.rar");
+            if (File.Exists(part1File))
+            {
+                return part1File;
+            }
+
+            // Check for older RAR volume formats: filename.rar + filename.r00, filename.r01, etc.
+            // In this case, the first volume keeps the .rar extension
+            string firstVolumeOldFormat = Path.Combine(directory, $"{fileNameWithoutExtension}.rar");
+            string secondVolumeOldFormat = Path.Combine(directory, $"{fileNameWithoutExtension}.r00");
+            if (File.Exists(firstVolumeOldFormat) && File.Exists(secondVolumeOldFormat))
+            {
+                return firstVolumeOldFormat;
+            }
+
+            // Check if only the first volume exists (very small archive that fits in one volume)
+            if (File.Exists(firstVolumeOldFormat))
+            {
+                return firstVolumeOldFormat;
+            }
+
+            // No RAR file found
+            return null;
+        }
+
+        private void DeleteExtraVolumes(string rarFilePath)
+        {
+            try
+            {
+                string directory = Path.GetDirectoryName(rarFilePath) ?? string.Empty;
+                string fileName = Path.GetFileName(rarFilePath);
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(rarFilePath);
+                
+                // Determine the base name (remove .partXX.rar or .rXX suffix if present)
+                string baseName = fileNameWithoutExtension;
+                
+                // Check if this is a volume file and extract base name
+                if (fileName.Contains(".part") && fileName.EndsWith(".rar"))
+                {
+                    // Format: filename.part01.rar - remove .part01
+                    int partIndex = fileName.IndexOf(".part");
+                    if (partIndex > 0)
+                    {
+                        baseName = fileName.Substring(0, partIndex);
+                    }
+                }
+                
+                // Delete extra volume files (keep the first volume)
+                // Pattern 1: filename.partXX.rar (zero-padded) - keep part01, delete part02 onwards
+                string[] partFiles = Directory.GetFiles(directory, $"{baseName}.part*.rar");
+                foreach (string file in partFiles)
+                {
+                    string partFileName = Path.GetFileName(file);
+                    // Skip the first volume (.part01.rar or .part1.rar)
+                    if (partFileName.Contains(".part01.rar") || partFileName.Contains(".part1.rar"))
+                    {
+                        continue;
+                    }
+                    
+                    try
+                    {
+                        File.Delete(file);
+                        Log.Debug(this, $"Deleted extra volume file: {file}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to delete extra volume file {file}: {ex.Message}");
+                    }
+                }
+                
+                // Pattern 2: filename.rXX (old format - r00, r01, r02, etc.)
+                // In old format, first volume is .rar, second is .r00, third is .r01, etc.
+                string[] rxxFiles = Directory.GetFiles(directory, $"{baseName}.r??");
+                foreach (string file in rxxFiles)
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        Log.Debug(this, $"Deleted extra volume file: {file}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to delete extra volume file {file}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write(this, $"Failed to delete extra volumes: {rarFilePath}{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        private void DeleteRARFileAndVolumes(string rarFilePath)
+        {
+            try
+            {
+                string directory = Path.GetDirectoryName(rarFilePath) ?? string.Empty;
+                string fileName = Path.GetFileName(rarFilePath);
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(rarFilePath);
+                
+                // Determine the base name (remove .partXX.rar or .rXX suffix if present)
+                string baseName = fileNameWithoutExtension;
+                
+                // Check if this is a volume file and extract base name
+                if (fileName.Contains(".part") && fileName.EndsWith(".rar"))
+                {
+                    // Format: filename.part01.rar - remove .part01
+                    int partIndex = fileName.IndexOf(".part");
+                    if (partIndex > 0)
+                    {
+                        baseName = fileName.Substring(0, partIndex);
+                    }
+                }
+                
+                // Delete all related volume files using pattern matching
+                // Pattern 1: filename.partXX.rar (zero-padded)
+                string[] partFiles = Directory.GetFiles(directory, $"{baseName}.part*.rar");
+                foreach (string file in partFiles)
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        Log.Debug(this, $"Deleted volume file: {file}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to delete volume file {file}: {ex.Message}");
+                    }
+                }
+                
+                // Pattern 2: filename.rXX (old format - r00, r01, r02, etc.)
+                string[] rxxFiles = Directory.GetFiles(directory, $"{baseName}.r??");
+                foreach (string file in rxxFiles)
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        Log.Debug(this, $"Deleted volume file: {file}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to delete volume file {file}: {ex.Message}");
+                    }
+                }
+                
+                // Also delete the main .rar file if it exists (old format first volume)
+                string mainRarFile = Path.Combine(directory, $"{baseName}.rar");
+                if (File.Exists(mainRarFile))
+                {
+                    try
+                    {
+                        File.Delete(mainRarFile);
+                        Log.Debug(this, $"Deleted main RAR file: {mainRarFile}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write(this, $"Failed to delete main RAR file {mainRarFile}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write(this, $"Failed to delete RAR file and volumes: {rarFilePath}{Environment.NewLine}{ex.Message}");
+            }
+        }
+
+        private static void CopyDirectory(string sourceDir, string destDir)
+        {
+            // Create destination directory
+            Directory.CreateDirectory(destDir);
+
+            // Copy all files
+            foreach (string file in Directory.GetFiles(sourceDir))
+            {
+                string destFile = Path.Combine(destDir, Path.GetFileName(file));
+                File.Copy(file, destFile, true);
+            }
+
+            // Copy all subdirectories recursively
+            foreach (string directory in Directory.GetDirectories(sourceDir))
+            {
+                string destDirectory = Path.Combine(destDir, Path.GetFileName(directory));
+                CopyDirectory(directory, destDirectory);
+            }
+        }
+
+        private void CopySelectedEntries(string sourceDir, string destDir, HashSet<string> filePaths, HashSet<string> directoryPaths)
+        {
+            string sourceRoot = Path.GetFullPath(sourceDir);
+            string destRoot = Path.GetFullPath(destDir);
+            int missingFiles = 0;
+            int skippedEntries = 0;
+
+            foreach (string directory in directoryPaths)
+            {
+                if (!TryResolveRelativePath(sourceRoot, directory, out string relativeDir))
+                {
+                    skippedEntries++;
+                    continue;
+                }
+
+                string destPath = Path.Combine(destRoot, relativeDir);
+                Directory.CreateDirectory(destPath);
+            }
+
+            foreach (string file in filePaths)
+            {
+                if (!TryResolveRelativePath(sourceRoot, file, out string relativeFile))
+                {
+                    skippedEntries++;
+                    continue;
+                }
+
+                string sourcePath = Path.Combine(sourceRoot, relativeFile);
+                if (!File.Exists(sourcePath))
+                {
+                    missingFiles++;
+                    Log.Warning(this, $"SRR entry not found on disk: {relativeFile}");
+                    continue;
+                }
+
+                string destPath = Path.Combine(destRoot, relativeFile);
+                string? destDirectory = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(destDirectory))
+                {
+                    Directory.CreateDirectory(destDirectory);
+                }
+
+                File.Copy(sourcePath, destPath, true);
+            }
+
+            if (skippedEntries > 0)
+            {
+                Log.Warning(this, $"Skipped {skippedEntries} SRR entries due to invalid paths.");
+            }
+
+            if (missingFiles > 0)
+            {
+                Log.Warning(this, $"Missing {missingFiles} SRR file entries on disk.");
+            }
+        }
+
+        private static bool TryResolveRelativePath(string baseFullPath, string entryPath, out string relativePath)
+        {
+            relativePath = string.Empty;
+            if (string.IsNullOrWhiteSpace(entryPath))
+            {
+                return false;
+            }
+
+            string normalized = entryPath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+            while (normalized.StartsWith("." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                normalized = normalized[2..];
+            }
+            normalized = normalized.TrimStart(Path.DirectorySeparatorChar);
+
+            if (normalized.Length == 0)
+            {
+                return false;
+            }
+
+            string basePath = Path.GetFullPath(baseFullPath);
+            string fullPath = Path.GetFullPath(Path.Combine(basePath, normalized));
+
+            string basePrefix = basePath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+                ? basePath
+                : basePath + Path.DirectorySeparatorChar;
+
+            if (!fullPath.StartsWith(basePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            relativePath = Path.GetRelativePath(basePath, fullPath);
+            return !string.IsNullOrWhiteSpace(relativePath) && relativePath != ".";
+        }
+
+        private void ValidateArchiveFileCrcs(string inputDirectory, Dictionary<string, string> expectedCrcs)
+        {
+            if (expectedCrcs.Count == 0)
+            {
+                return;
+            }
+
+            List<string> missing = [];
+            List<string> mismatched = [];
+
+            foreach (KeyValuePair<string, string> entry in expectedCrcs)
+            {
+                string relativePath = entry.Key;
+                string expectedCrc = entry.Value;
+                string filePath = Path.Combine(inputDirectory, relativePath);
+
+                if (!File.Exists(filePath))
+                {
+                    missing.Add(relativePath);
+                    continue;
+                }
+
+                string actualCrc = CRC32.Calculate(filePath);
+                if (!string.Equals(actualCrc, expectedCrc, StringComparison.OrdinalIgnoreCase))
+                {
+                    mismatched.Add($"{relativePath} (expected {expectedCrc}, got {actualCrc})");
+                }
+            }
+
+            if (missing.Count == 0 && mismatched.Count == 0)
+            {
+                Log.Information(this, $"SRR CRC32 validation passed for {expectedCrcs.Count} file(s).");
+                return;
+            }
+
+            foreach (string entry in missing)
+            {
+                Log.Error(this, $"SRR CRC32 validation missing file: {entry}");
+            }
+
+            foreach (string entry in mismatched)
+            {
+                Log.Error(this, $"SRR CRC32 validation mismatch: {entry}");
+            }
+
+            int issueCount = missing.Count + mismatched.Count;
+            throw new InvalidDataException($"SRR CRC32 validation failed for {issueCount} file(s).");
+        }
+
+        private string PrepareInputDirectory(BruteForceOptions options)
+        {
+            string inputFilesDir = Path.Combine(options.OutputDirectoryPath, "input");
+            if (Directory.Exists(inputFilesDir))
+            {
+                Log.Information(this, $"Cleaning existing input directory: {inputFilesDir}");
+                Directory.Delete(inputFilesDir, true);
+            }
+
+            Log.Information(this, $"Creating input directory and copying files from {options.ReleaseDirectoryPath} to {inputFilesDir}");
+            Directory.CreateDirectory(inputFilesDir);
+            if (options.RAROptions.HasArchiveFileList)
+            {
+                Log.Information(this, $"Using SRR file list: {options.RAROptions.ArchiveFilePaths.Count} files, {options.RAROptions.ArchiveDirectoryPaths.Count} dirs");
+                CopySelectedEntries(options.ReleaseDirectoryPath, inputFilesDir, options.RAROptions.ArchiveFilePaths, options.RAROptions.ArchiveDirectoryPaths);
+            }
+            else
+            {
+                CopyDirectory(options.ReleaseDirectoryPath, inputFilesDir);
+            }
+            Log.Information(this, $"Finished copying {Directory.GetFiles(inputFilesDir, "*.*", SearchOption.AllDirectories).Length} files to input directory");
+
+            if (options.RAROptions.ArchiveFileCrcs.Count > 0)
+            {
+                Log.Information(this, $"Validating SRR CRC32 entries: {options.RAROptions.ArchiveFileCrcs.Count} file(s)");
+                ValidateArchiveFileCrcs(inputFilesDir, options.RAROptions.ArchiveFileCrcs);
+            }
+
+            return inputFilesDir;
+        }
     }
 }

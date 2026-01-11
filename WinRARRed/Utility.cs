@@ -2,7 +2,7 @@
 {
     public static class Utility
     {
-        private static readonly string[] SizeUnits = new[] { "b", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB" };
+        private static readonly string[] SizeUnits = ["b", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
 
         public static string GetUserFriendlySizeString(long bytes)
         {

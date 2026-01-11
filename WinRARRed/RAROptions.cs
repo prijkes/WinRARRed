@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System;
 using System.Windows.Forms;
 using WinRARRed.Diagnostics;
 
@@ -39,5 +40,13 @@ namespace WinRARRed
         ///   <c>true</c> if RAR files should be deleted when checksum does not match; otherwise, <c>false</c>.
         /// </value>
         public bool DeleteRARFiles { get; set; }
+
+        public Dictionary<string, string> ArchiveFileCrcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public HashSet<string> ArchiveFilePaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public HashSet<string> ArchiveDirectoryPaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public bool HasArchiveFileList => ArchiveFilePaths.Count > 0 || ArchiveDirectoryPaths.Count > 0;
     }
 }

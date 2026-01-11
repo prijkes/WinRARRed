@@ -58,8 +58,8 @@ namespace WinRARRed.Forms
             tsmiViewCommandLines = new System.Windows.Forms.ToolStripMenuItem();
             tsmiSettings = new System.Windows.Forms.ToolStripMenuItem();
             tsmiSettingsOptions = new System.Windows.Forms.ToolStripMenuItem();
-            opStatus2 = new Controls.OperationProgressStatusUserControl();
-            opStatus1 = new Controls.OperationProgressStatusUserControl();
+            opStatus2 = new WinRARRed.Controls.OperationProgressStatusUserControl();
+            opStatus1 = new WinRARRed.Controls.OperationProgressStatusUserControl();
             btnClearLog = new System.Windows.Forms.Button();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
@@ -169,7 +169,7 @@ namespace WinRARRed.Forms
             tbReleaseDirectory.Name = "tbReleaseDirectory";
             tbReleaseDirectory.Size = new System.Drawing.Size(755, 23);
             tbReleaseDirectory.TabIndex = 5;
-            tbReleaseDirectory.Text = "G:\\Temp\\sw_dvd5_proofing_tools_2016_64bit_multilang_complkit_mlf_x20-42861";
+            tbReleaseDirectory.Text = "E:\\temp3";
             // 
             // btnStart
             // 
@@ -234,7 +234,7 @@ namespace WinRARRed.Forms
             // tbLog
             // 
             tbLog.Dock = System.Windows.Forms.DockStyle.Fill;
-            tbLog.Font = new System.Drawing.Font("Consolas", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
+            tbLog.Font = new System.Drawing.Font("Consolas", 9F);
             tbLog.Location = new System.Drawing.Point(3, 19);
             tbLog.Multiline = true;
             tbLog.Name = "tbLog";
@@ -293,7 +293,7 @@ namespace WinRARRed.Forms
             tbVerificationFilePath.Name = "tbVerificationFilePath";
             tbVerificationFilePath.Size = new System.Drawing.Size(755, 23);
             tbVerificationFilePath.TabIndex = 7;
-            tbVerificationFilePath.Text = "G:\\Temp\\sw_dvd5_proofing_tools_2016_64bit_multilang_complkit_mlf_x20-42861.sfv";
+            tbVerificationFilePath.Text = "D:\\ali.g-dmt.sfv";
             // 
             // menuStrip1
             // 

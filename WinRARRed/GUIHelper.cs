@@ -1,6 +1,5 @@
 ﻿using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Windows.Forms;
 
 namespace WinRARRed
@@ -111,6 +110,19 @@ namespace WinRARRed
                 && MessageBox.Show(text, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK;
         }
 
+        public static void ShowInfo(Control? control, string text, string title = "Information")
+        {
+             if (control != null)
+            {
+                SetFocus(control);
+            }
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                MessageBox.Show(text, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
         public static void SetFocus(Control control)
         {
             Stack<Control> parents = new();
@@ -136,7 +148,7 @@ namespace WinRARRed
 
                 parent.Focus();
             }
-            while (parents.Any());
+            while (parents.Count != 0);
         }
     }
 }

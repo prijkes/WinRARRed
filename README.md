@@ -1,53 +1,72 @@
 # WinRARRed
 
-**WinRARRed** is a specialized utility designed to reconstruct exact, bit-perfect copies of RAR archives from their uncompressed contents. It is particularly useful for digital preservation and verifying the integrity of "scene" releases where the original archive file is missing or corrupted, but the contained files are intact.
+WinRARRed is a Windows utility that brute-forces WinRAR command line settings to recreate a bit-perfect RAR archive from its extracted files. It is aimed at preservation workflows where the original archive is missing but the payload files (and a verification hash) are intact.
 
-## How It Works
+## How it works
 
-WinRARRed uses a **brute-force** approach to identify the exact compression parameters used to create the original archive. It iteratively compresses the source files using:
-
-*   **Multiple WinRAR Versions**: It cycles through different versions of `rar.exe` (e.g., v4.x, v5.x) to match the compression algorithm used originally.
-*   **Command Line Switches**: It tests various permutations of compression arguments, including:
-    *   Compression methods (`-m0` to `-m5`)
-    *   Dictionary sizes (`-md64k` to `-md1g`)
-    *   Time stamp behavior (`-ts`)
-    *   File attributes (`-ai`, `-r`, etc.)
-*   **File Attribute Toggling**: It attempts to match file attributes (Archive, NotContentIndexed) that affect the binary output.
-
-For each attempt, it calculates the hash (CRC32 or SHA1) of the generated archive and compares it against a target hash provided by a verification file (`.sfv` or `.sha1`).
+1. Copies the release into a scratch folder (recreated on each run).
+2. Iterates over each `rar.exe` under a WinRAR versions root, filtered by the selected version range.
+3. Generates archives for each switch combination.
+4. Calculates CRC32 or SHA1 and compares it to the verification file.
+5. When a match is found, the archive is kept and reported.
 
 ## Features
 
-*   **Brute-Force Engine**: Automated testing of thousands of parameter combinations.
-*   **Multi-Threading**: Utilizes multiple CPU cores to speed up the brute-force process.
-*   **Hash Verification**: Supports matching against:
-    *   **SFV** (CRC32)
-    *   **SHA1**
-*   **CLI Parameter Discovery**: Once a match is found, it reports the exact WinRAR version and command-line arguments used.
-*   **Clean UI**: Windows Forms interface for easy configuration and progress monitoring.
+- Brute-force across multiple WinRAR versions (2.x through 6.x) and archive formats (`-ma4`, `-ma5`).
+- Switch matrix support: compression level, dictionary size, solid on/off, recursion, timestamp flags, volume sizing, and `-mt` thread counts.
+- File attribute toggling (Archive, NotContentIndexed) or `-ai` to ignore attributes.
+- SRR import to prefill settings and verify input files (see below).
+- Multi-volume handling for `.partXX.rar` and legacy `.r00` naming.
+- View generated command lines from the UI.
+- Logging to disk (app logs + per-attempt logs).
+- Optional cleanup of non-matching archives to control disk usage.
 
-## Prerequisites
+## Requirements
 
-To use WinRARRed, you need:
-
-1.  **Source Files**: The uncompressed files from the original release (must be unmodified).
-2.  **WinRAR Installations**: A directory containing multiple versions of `rar.exe` (WinRAR executables) in separate subdirectories (e.g., `WinRAR Versions/5.50/rar.exe`, `WinRAR Versions/6.00/rar.exe`).
-3.  **Verification File**: An `.sfv` or `.sha1` file containing the hash of the original RAR archive(s).
-4.  **.NET 8.0 Runtime**: The application is built on .NET 8.
+- Windows 10/11.
+- .NET 8.0 runtime.
+- A folder of WinRAR builds, each in its own subdirectory containing `rar.exe`.
+  The folder name must include version digits (examples: `winrar-x64-400`, `rar-550`, `winrar-x64-600`).
+- The release directory with uncompressed files (must be unmodified).
+- A verification file: `.sfv` (CRC32) or `.sha1`.
 
 ## Usage
 
-1.  **WinRAR Directory**: Select the folder containing your collection of `rar.exe` versions.
-2.  **Release Directory**: Select the folder containing the uncompressed source files.
-3.  **Verification File**: Select the `.sfv` or `.sha1` file with the expected hashes.
-4.  **Temporary Directory**: A folder where temporary RAR files will be created (SSD recommended for speed).
-5.  **Settings**: Configure which switches and versions to test via the "Options" menu.
-6.  **Start**: Click start to begin the brute-force process.
+1. Select the WinRAR versions folder.
+2. Select the release folder.
+3. Select the verification file (`.sfv` or `.sha1`).
+4. Pick a temporary output folder (SSD recommended).
+5. Open Options to select versions and switch families; optionally import an `.srr`.
+6. Start the brute-force run.
+
+Outputs:
+- Scratch folders are created under the chosen output path:
+  - `input` (copied release files)
+  - `output` (generated archives)
+  - `logs` (per-attempt RAR output)
+- If a match is found, the matching archive is moved to the WinRAR versions root as `<ReleaseName>.rar`.
+- App logs are written to `logs` next to the executable.
+- If "Delete RAR files" is disabled, `output` keeps the first volume of non-matching attempts.
+
+## SRR import
+
+Use `Options -> Import SRR` to apply metadata from an `.srr`:
+- Archive file list and CRC32s (used to validate copied input files).
+- Compression method and dictionary size.
+- Solid/archive and multi-volume flags plus volume sizing when detectable.
+- Candidate RAR version range based on SRR headers.
+- Stored `.sfv` extraction to `%TEMP%\WinRARRed\srr-import\...` when present.
 
 ## Build
 
-Open `WinRARRed.sln` in Visual Studio 2022 and build for `Release` / `x64`.
+Open `WinRARRed.sln` in Visual Studio 2022 and build `Release` / `x64`.
+
+## Repo contents
+
+- `WinRARRed/` - C# WinForms application.
+- `tools/` - helper scripts for SRR inspection (optional).
+- `pyrescene/` and `unrar/` - bundled upstream sources/reference material.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT - see [LICENSE](LICENSE).

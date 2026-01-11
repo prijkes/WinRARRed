@@ -1,17 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using CliWrap;
 using WinRARRed.IO;
 
 namespace WinRARRed.Diagnostics
 {
-    public sealed partial class RARProcess : IDisposable
+    public sealed partial class RARProcess
     {
         public event EventHandler<ProcessDataEventArgs>? ProcessOutput;
 
@@ -29,10 +29,6 @@ namespace WinRARRed.Diagnostics
 
         public string[] CommandLineOptions { get; private set; }
 
-        private Process Process { get; set; }
-
-        private StringBuilder StringBuilder { get; set; } = new();
-
         private struct ArchiveItem
         {
             public string FileName { get; set; }
@@ -42,18 +38,33 @@ namespace WinRARRed.Diagnostics
             public bool Done { get; set; }
         };
 
-        private struct Archive(string archiveFileName)
+        private struct Archive
         {
-            public string ArchiveFileName { get; set; } = archiveFileName;
+            public string ArchiveFileName { get; set; }
 
-            public List<ArchiveItem> ArchiveItems { get; set; } = [];
+            public List<ArchiveItem> ArchiveItems { get; set; }
+
+            public Archive()
+            {
+                ArchiveFileName = string.Empty;
+                ArchiveItems = [];
+            }
         }
 
         private Archive ArchiveFile = new();
 
-        [GeneratedRegex("[\\s^]*(?<filename>[A-Z]{1}:.+\\.[^\\s.]*)[\\b\\s]+(?<progress>[0-9]+)%", RegexOptions.Compiled)]
-        private static partial Regex GeneratedRegex();
-        private static readonly Regex ProgressRegex = GeneratedRegex();
+        private static readonly Encoding OutputEncoding = GetOutputEncoding();
+
+        // Matches lines with filename and percentage, language-independent
+        // Examples: "Adding    .\file.txt    0%" or "Ajout    .\file.txt    100%  OK"
+        // Captures any filename pattern between the action word and progress columns.
+        [GeneratedRegex(@"^\s*\S+\s+(?<filename>.+?)\s{2,}(?<progress>\d+)%", RegexOptions.Compiled)]
+        private static partial Regex GeneratedProgressRegex();
+        private static readonly Regex ProgressRegex = GeneratedProgressRegex();
+
+        [GeneratedRegex(@"^\s*\S+\s+(?<filename>.+?)\s{2,}OK\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+        private static partial Regex GeneratedOkRegex();
+        private static readonly Regex OkRegex = GeneratedOkRegex();
 
         public RARProcess(string processFilePath, string inputDirectory, string outputFilePath, IEnumerable<string> commandLineOptions)
         {
@@ -79,105 +90,139 @@ namespace WinRARRed.Diagnostics
 
             // Save new options
             CommandLineOptions = [.. options];
-
-            Process = new()
-            {
-                StartInfo = new()
-                {
-                    FileName = ProcessFilePath,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardError = true,
-                    RedirectStandardOutput = true,
-                    WorkingDirectory = InputDirectory
-                },
-                EnableRaisingEvents = true
-            };
-
-            Process.OutputDataReceived += Process_OutputDataReceived;
-            Process.ErrorDataReceived += Process_ErrorDataReceived;
-            Process.Exited += Process_Exited;
         }
 
         public async Task<int> RunAsync(CancellationToken cancellationToken)
         {
-            // Command line options
-            foreach (string commandLineOption in CommandLineOptions)
-            {
-                Process.StartInfo.ArgumentList.Add(commandLineOption);
-            }
-
             // Start process
             try
             {
-                Process.Start();
-
+                Log.Debug(this, $"Starting RAR process: {ProcessFilePath}");
+                Log.Debug(this, $"Working Directory: {InputDirectory}");
+                Log.Debug(this, $"Output File: {OutputFilePath}");
+                Log.Debug(this, $"Arguments: {string.Join(" ", CommandLineOptions)}");
+                
                 FireProcessStatusChanged(new(OperationStatus.Running));
+                FireCompressionStatusChanged(new(OperationStatus.Running, OutputFilePath));
 
-                // Asynchronously read the standard output of the spawned process.
-                // This raises OutputDataReceived and ErrorDataReceived events for each line of output.
-                Process.BeginOutputReadLine();
-                Process.BeginErrorReadLine();
+                var startTime = DateTime.Now;
 
-                // Wait for it to exit
-                await Process.WaitForExitAsync(cancellationToken);
+                // Create custom streams to capture output as it arrives (including \r updates)
+                var stdOutStream = new OutStream(data => HandleOutputData(data, startTime), OutputEncoding);
+                var stdErrStream = new OutStream(HandleErrorData, OutputEncoding);
+
+                var result = await Cli.Wrap(ProcessFilePath)
+                    .WithArguments(CommandLineOptions)
+                    .WithWorkingDirectory(InputDirectory)
+                    .WithStandardOutputPipe(PipeTarget.ToStream(stdOutStream))
+                    .WithStandardErrorPipe(PipeTarget.ToStream(stdErrStream))
+                    .WithValidation(CommandResultValidation.None) // Manually handle exit codes
+                    .ExecuteAsync(cancellationToken);
+                
+                int exitCode = result.ExitCode;
+                var elapsed = DateTime.Now - startTime;
+
+                Log.Information(this, $"RAR process completed. Exit Code: {exitCode}, Duration: {elapsed.TotalSeconds:F2}s, Output: {OutputFilePath}");
+
+                OperationCompletionStatus completionStatus = exitCode == 0 ? OperationCompletionStatus.Success : OperationCompletionStatus.Error;
+
+                FireProcessStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, completionStatus));
+                FireCompressionStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, completionStatus, OutputFilePath));
+
+                return exitCode;
             }
             catch (OperationCanceledException)
             {
+                Log.Warning(this, $"RAR process cancelled: {OutputFilePath}");
                 FireProcessStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, OperationCompletionStatus.Cancelled));
-
-                //Process.Kill();
+                FireCompressionStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, OperationCompletionStatus.Cancelled, OutputFilePath));
+                // CliWrap handles getting killed on cancellation automatically
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Error(this, ex, $"RAR process failed: {OutputFilePath}");
+                FireCompressionStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, OperationCompletionStatus.Error, OutputFilePath));
                 throw;
             }
 
-            //return Process.ExitCode;
             return 1;
         }
 
-        public void Dispose()
+        // Custom stream class to capture data as it arrives (byte-by-byte)
+        private class OutStream : Stream
         {
-            Process.OutputDataReceived -= Process_OutputDataReceived;
-            Process.ErrorDataReceived -= Process_ErrorDataReceived;
-            Process.Exited -= Process_Exited;
+            private readonly StringBuilder _buffer = new();
+            private readonly Action<string> _onData;
+            private readonly Encoding _encoding;
 
-            Process?.Dispose();
-        }
-
-        private void Process_OutputDataReceived(object? sender, DataReceivedEventArgs e)
-        {
-            if (sender is not Process process)
+            public OutStream(Action<string> onData, Encoding encoding)
             {
-                return;
+                _onData = onData;
+                _encoding = encoding;
             }
 
-            ProcessOutput?.Invoke(this, new(e.Data));
-
-            if (!string.IsNullOrEmpty(e.Data))
+            public override bool CanRead => false;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
             {
-                ParseProcessOutputData(e.Data, process.StartTime);
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush() { }
+
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                // Decode bytes to string
+                string data = _encoding.GetString(buffer, offset, count);
+                
+                // Process each character
+                foreach (char c in data)
+                {
+                    if (c == '\n')
+                    {
+                        // Newline - flush current buffer and notify
+                        _onData(_buffer.ToString());
+                        _buffer.Clear();
+                    }
+                    else if (c == '\r')
+                    {
+                        // Carriage return - notify with current buffer but don't clear
+                        // This allows progress updates on the same line
+                        _onData(_buffer.ToString());
+                        _buffer.Clear();
+                    }
+                    else
+                    {
+                        // Regular character - append to buffer
+                        _buffer.Append(c);
+                    }
+                }
             }
         }
 
-        private void Process_ErrorDataReceived(object? sender, DataReceivedEventArgs e)
+
+        private void HandleOutputData(string data, DateTime startTime)
         {
-            ProcessOutput?.Invoke(this, new(e.Data, true));
+            ProcessOutput?.Invoke(this, new(data));
+
+            if (!string.IsNullOrEmpty(data))
+            {
+                ParseProcessOutputData(data, startTime);
+            }
         }
 
-        private void Process_Exited(object? sender, EventArgs e)
+        private void HandleErrorData(string data)
         {
-            if (sender is not Process process)
-            {
-                return;
-            }
-
-            FireProcessStatusChanged(new(OperationStatus.Running, OperationStatus.Completed, process.ExitCode switch
-            {
-                0 => OperationCompletionStatus.Success,
-                _ => OperationCompletionStatus.Error
-            }));
+            ProcessOutput?.Invoke(this, new(data, true));
         }
 
         /*
@@ -201,34 +246,111 @@ namespace WinRARRed.Diagnostics
                 return;
             }
 
-            StringBuilder.Append(output);
-
-            string s = StringBuilder.ToString();
-
             if (string.IsNullOrEmpty(ArchiveFile.ArchiveFileName))
             {
-                // Try parsing current file
-                // Creating archive G:\Temp\temp\archived-winrar-x64-401-a-r-ds-s--m0-tsm4-tsc0-tsa0.rar
-                Match m = ProgressRegex.Match(s);
-                if (!m.Success)
-                {
-                    // Can't do anything
-                    return;
-                }
-
-                ArchiveFile .ArchiveFileName = m.Groups["filename"].Value;
+                // Use the OutputFilePath property which is already known from constructor
+                // This is reliable across all languages and archive extensions (.rar, .r00, .r01, etc.)
+                ArchiveFile.ArchiveFileName = OutputFilePath;
             }
 
-            MatchCollection progressMatches = ProgressRegex.Matches(s);
-            foreach (Match m in progressMatches.Cast<Match>())
+            // Parse the current line for progress information.
+            // Lines like: Adding    .\ali.g-dmt.avi                                          0%  0%  0%
+            // Or done:    Adding    .\file name.txt  OK
+            Match lineMatch = ProgressRegex.Match(output);
+            if (lineMatch.Success)
             {
-                string progressStr = m.Groups["progress"].Value;
-                if (!int.TryParse(progressStr, out int progress))
-                {
-                    continue;
-                }
+                string filename = NormalizeOutputFileName(lineMatch.Groups["filename"].Value);
+                string progressStr = lineMatch.Groups["progress"].Value;
 
-                FireCompressionProgress(new(100, progress, startDateTime, string.Empty));
+                if (!string.IsNullOrEmpty(filename) && int.TryParse(progressStr, out int progress))
+                {
+                    // Find or create the archive item for this file
+                    int itemIndex = ArchiveFile.ArchiveItems.FindIndex(item => item.FileName == filename);
+                    
+                    if (itemIndex >= 0)
+                    {
+                        // Update existing item
+                        var item = ArchiveFile.ArchiveItems[itemIndex];
+                        item.Progress = progress;
+                        item.Done = progress >= 100;
+                        ArchiveFile.ArchiveItems[itemIndex] = item;
+                    }
+                    else
+                    {
+                        // Add new item
+                        ArchiveFile.ArchiveItems.Add(new ArchiveItem
+                        {
+                            FileName = filename,
+                            Progress = progress,
+                            Done = progress >= 100
+                        });
+                    }
+
+                    // Fire overall compression progress using the latest progress value
+                    string filePath = Path.IsPathRooted(filename) ? filename : Path.Combine(InputDirectory, filename);
+                    FireCompressionProgress(new(100, progress, startDateTime, filePath));
+                }
+            }
+            else if (output.Contains("OK", StringComparison.OrdinalIgnoreCase))
+            {
+                // Handle lines like: Adding    .\file.txt  OK (language-independent)
+                // Use regex to extract filename from "OK" completion lines
+                Match okMatch = OkRegex.Match(output);
+                if (okMatch.Success)
+                {
+                    string filename = NormalizeOutputFileName(okMatch.Groups["filename"].Value);
+                    
+                    // Mark this file as done
+                    int itemIndex = ArchiveFile.ArchiveItems.FindIndex(item => item.FileName == filename);
+                    
+                    if (itemIndex >= 0)
+                    {
+                        var item = ArchiveFile.ArchiveItems[itemIndex];
+                        item.Progress = 100;
+                        item.Done = true;
+                        ArchiveFile.ArchiveItems[itemIndex] = item;
+                    }
+                    else
+                    {
+                        // File completed without progress updates (small file)
+                        ArchiveFile.ArchiveItems.Add(new ArchiveItem
+                        {
+                            FileName = filename,
+                            Progress = 100,
+                            Done = true
+                        });
+                    }
+
+                    string filePath = Path.IsPathRooted(filename) ? filename : Path.Combine(InputDirectory, filename);
+                    FireCompressionProgress(new(100, 100, startDateTime, filePath));
+                }
+            }
+        }
+
+        private static string NormalizeOutputFileName(string filename)
+        {
+            string trimmed = filename.Trim();
+            if (trimmed.StartsWith(".\\", StringComparison.Ordinal) || trimmed.StartsWith("./", StringComparison.Ordinal))
+            {
+                return trimmed[2..];
+            }
+
+            return trimmed;
+        }
+
+        private static Encoding GetOutputEncoding()
+        {
+            try
+            {
+                return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+            }
+            catch (ArgumentException)
+            {
+                return Encoding.UTF8;
+            }
+            catch (NotSupportedException)
+            {
+                return Encoding.UTF8;
             }
         }
 

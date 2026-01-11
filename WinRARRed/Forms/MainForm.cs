@@ -23,6 +23,7 @@ namespace WinRARRed.Forms
 
             OptionsForm = new();
             OptionsForm.Hide();
+            OptionsForm.VerificationFileExtracted += OptionsForm_VerificationFileExtracted;
 
             WinRARRed.Log.Logged += Log_Logged;
 
@@ -60,6 +61,28 @@ namespace WinRARRed.Forms
         private void TsmiSettingsOptions_Click(object? sender, EventArgs e)
         {
             OptionsForm.ShowDialog(this);
+        }
+
+        private void OptionsForm_VerificationFileExtracted(object? sender, string verificationFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(verificationFilePath))
+            {
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                try
+                {
+                    Invoke((MethodInvoker)delegate { OptionsForm_VerificationFileExtracted(sender, verificationFilePath); });
+                }
+                catch
+                {
+                }
+                return;
+            }
+
+            tbVerificationFilePath.Text = verificationFilePath;
         }
 
         private void Manager_DirectoryExtractionProgress(object? sender, OperationProgressEventArgs e)
@@ -221,7 +244,7 @@ namespace WinRARRed.Forms
                 return;
             }
             HashSet<string> hashes = ReadVerificationFile(verificationFilePath, hashType.Value);
-            if (!hashes.Any())
+            if (hashes.Count == 0)
             {
                 GUIHelper.ShowError(tbVerificationFilePath, "No hashes found in verification file.");
                 return;
@@ -275,14 +298,11 @@ namespace WinRARRed.Forms
                 opStatus1.Reset();
                 opStatus2.Reset();
 
-                // Copy release files recursively
-                CopyFilesRecursively(inputDirectory, outputDirectory);
-
-                // Set current working directory to base directory of release.
-                // rar.exe won't properly add directories otherwise (it will add the whole path instead...)
+                // Set current working directory to output directory
+                // Note: Manager.cs will copy files to outputDirectory/input/ as needed
                 Environment.CurrentDirectory = outputDirectory;
 
-                BruteForceOptions bruteforceOptions = new(winRARDirectory, outputDirectory, outputDirectory)
+                BruteForceOptions bruteforceOptions = new(winRARDirectory, inputDirectory, outputDirectory)
                 {
                     Hashes = hashes,
                     RAROptions = OptionsForm.RAROptions,
@@ -290,9 +310,6 @@ namespace WinRARRed.Forms
                 };
 
                 bool success = await Manager.BruteForceRARVersionAsync(bruteforceOptions);
-
-                // Restore current working directory.
-                Environment.CurrentDirectory = currentWorkingDirectory;
 
                 if (success)
                 {
@@ -313,6 +330,7 @@ namespace WinRARRed.Forms
             }
             finally
             {
+                Environment.CurrentDirectory = currentWorkingDirectory;
                 Manager = null;
                 OptionsForm.Toggle(true);
             }
@@ -427,15 +445,18 @@ namespace WinRARRed.Forms
         {
             foreach (string dirPath in Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories))
             {
-                Directory.CreateDirectory(dirPath.Replace(sourcePath, targetPath));
+                string relativePath = Path.GetRelativePath(sourcePath, dirPath);
+                string newDirPath = Path.Combine(targetPath, relativePath);
+                Directory.CreateDirectory(newDirPath);
             }
 
-            foreach (string newPath in Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories))
+            foreach (string filePath in Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories))
             {
-                string dstPath = newPath.Replace(sourcePath, targetPath);
+                string relativePath = Path.GetRelativePath(sourcePath, filePath);
+                string dstPath = Path.Combine(targetPath, relativePath);
                 if (!File.Exists(dstPath))
                 {
-                    File.Copy(newPath, dstPath);
+                    File.Copy(filePath, dstPath);
                 }
             }
         }

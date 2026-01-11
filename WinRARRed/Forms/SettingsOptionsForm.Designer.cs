@@ -75,12 +75,10 @@ namespace WinRARRed.Forms
             label18 = new System.Windows.Forms.Label();
             groupBox10 = new System.Windows.Forms.GroupBox();
             groupBox9 = new System.Windows.Forms.GroupBox();
-            rbOptionsV1000 = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeKB = new System.Windows.Forms.RadioButton();
             cbSwitchV = new System.Windows.Forms.CheckBox();
-            rbOptionsV1 = new System.Windows.Forms.RadioButton();
-            nupOptionsV = new System.Windows.Forms.NumericUpDown();
-            label8 = new System.Windows.Forms.Label();
-            rbOptionsV1024 = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeGB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeMB = new System.Windows.Forms.RadioButton();
             cbSwitchR = new System.Windows.Forms.CheckBox();
             groupBox8 = new System.Windows.Forms.GroupBox();
             cbSwitchMD1G = new System.Windows.Forms.CheckBox();
@@ -110,12 +108,18 @@ namespace WinRARRed.Forms
             cbSwitchM0 = new System.Windows.Forms.CheckBox();
             label1 = new System.Windows.Forms.Label();
             btnSave = new System.Windows.Forms.Button();
+            btnImportSrr = new System.Windows.Forms.Button();
             btnCancel = new System.Windows.Forms.Button();
             cbDeleteRARFiles = new System.Windows.Forms.CheckBox();
             checkBox1 = new System.Windows.Forms.CheckBox();
             checkBox2 = new System.Windows.Forms.CheckBox();
             checkBox3 = new System.Windows.Forms.CheckBox();
             groupBox5 = new System.Windows.Forms.GroupBox();
+            rbSwitchSizeKiB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeMiB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeGiB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeBytes = new System.Windows.Forms.RadioButton();
+            tbSwitchSize = new System.Windows.Forms.TextBox();
             gbFileOptions.SuspendLayout();
             gbRARVersion.SuspendLayout();
             gbSwitches.SuspendLayout();
@@ -128,7 +132,6 @@ namespace WinRARRed.Forms
             ((System.ComponentModel.ISupportInitialize)nupSwitchMTStart).BeginInit();
             groupBox10.SuspendLayout();
             groupBox9.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)nupOptionsV).BeginInit();
             groupBox8.SuspendLayout();
             groupBox7.SuspendLayout();
             groupBox6.SuspendLayout();
@@ -142,7 +145,7 @@ namespace WinRARRed.Forms
             gbFileOptions.Controls.Add(cbFileA);
             gbFileOptions.Location = new System.Drawing.Point(12, 142);
             gbFileOptions.Name = "gbFileOptions";
-            gbFileOptions.Size = new System.Drawing.Size(1108, 87);
+            gbFileOptions.Size = new System.Drawing.Size(1131, 87);
             gbFileOptions.TabIndex = 34;
             gbFileOptions.TabStop = false;
             gbFileOptions.Text = "File options";
@@ -271,7 +274,7 @@ namespace WinRARRed.Forms
             gbSwitches.Controls.Add(groupBox6);
             gbSwitches.Location = new System.Drawing.Point(12, 235);
             gbSwitches.Name = "gbSwitches";
-            gbSwitches.Size = new System.Drawing.Size(1108, 519);
+            gbSwitches.Size = new System.Drawing.Size(1131, 562);
             gbSwitches.TabIndex = 32;
             gbSwitches.TabStop = false;
             gbSwitches.Text = "Switches for archiving";
@@ -281,7 +284,7 @@ namespace WinRARRed.Forms
             groupBox1.Controls.Add(groupBox4);
             groupBox1.Controls.Add(groupBox3);
             groupBox1.Controls.Add(groupBox2);
-            groupBox1.Location = new System.Drawing.Point(682, 22);
+            groupBox1.Location = new System.Drawing.Point(704, 22);
             groupBox1.Name = "groupBox1";
             groupBox1.Size = new System.Drawing.Size(417, 488);
             groupBox1.TabIndex = 37;
@@ -521,7 +524,7 @@ namespace WinRARRed.Forms
             groupBox13.Controls.Add(nupSwitchMTStart);
             groupBox13.Location = new System.Drawing.Point(6, 303);
             groupBox13.Name = "groupBox13";
-            groupBox13.Size = new System.Drawing.Size(670, 88);
+            groupBox13.Size = new System.Drawing.Size(692, 88);
             groupBox13.TabIndex = 25;
             groupBox13.TabStop = false;
             groupBox13.Text = "Threads";
@@ -615,36 +618,39 @@ namespace WinRARRed.Forms
             groupBox10.Controls.Add(groupBox9);
             groupBox10.Location = new System.Drawing.Point(6, 422);
             groupBox10.Name = "groupBox10";
-            groupBox10.Size = new System.Drawing.Size(609, 87);
+            groupBox10.Size = new System.Drawing.Size(692, 131);
             groupBox10.TabIndex = 22;
             groupBox10.TabStop = false;
             groupBox10.Text = "Volumes";
             // 
             // groupBox9
             // 
-            groupBox9.Controls.Add(rbOptionsV1000);
+            groupBox9.Controls.Add(tbSwitchSize);
+            groupBox9.Controls.Add(rbSwitchSizeBytes);
+            groupBox9.Controls.Add(rbSwitchSizeGiB);
+            groupBox9.Controls.Add(rbSwitchSizeMiB);
+            groupBox9.Controls.Add(rbSwitchSizeKiB);
+            groupBox9.Controls.Add(rbSwitchSizeKB);
             groupBox9.Controls.Add(cbSwitchV);
-            groupBox9.Controls.Add(rbOptionsV1);
-            groupBox9.Controls.Add(nupOptionsV);
-            groupBox9.Controls.Add(label8);
-            groupBox9.Controls.Add(rbOptionsV1024);
+            groupBox9.Controls.Add(rbSwitchSizeGB);
+            groupBox9.Controls.Add(rbSwitchSizeMB);
             groupBox9.Location = new System.Drawing.Point(6, 22);
             groupBox9.Name = "groupBox9";
-            groupBox9.Size = new System.Drawing.Size(597, 55);
+            groupBox9.Size = new System.Drawing.Size(680, 101);
             groupBox9.TabIndex = 21;
             groupBox9.TabStop = false;
             groupBox9.Text = "Split";
             // 
-            // rbOptionsV1000
+            // rbSwitchSizeKB
             // 
-            rbOptionsV1000.AutoSize = true;
-            rbOptionsV1000.Enabled = false;
-            rbOptionsV1000.Location = new System.Drawing.Point(450, 21);
-            rbOptionsV1000.Name = "rbOptionsV1000";
-            rbOptionsV1000.Size = new System.Drawing.Size(49, 19);
-            rbOptionsV1000.TabIndex = 21;
-            rbOptionsV1000.Text = "1000";
-            rbOptionsV1000.UseVisualStyleBackColor = true;
+            rbSwitchSizeKB.AutoSize = true;
+            rbSwitchSizeKB.Enabled = false;
+            rbSwitchSizeKB.Location = new System.Drawing.Point(454, 22);
+            rbSwitchSizeKB.Name = "rbSwitchSizeKB";
+            rbSwitchSizeKB.Size = new System.Drawing.Size(105, 19);
+            rbSwitchSizeKB.TabIndex = 21;
+            rbSwitchSizeKB.Text = "KB - 1000 bytes";
+            rbSwitchSizeKB.UseVisualStyleBackColor = true;
             // 
             // cbSwitchV
             // 
@@ -656,48 +662,29 @@ namespace WinRARRed.Forms
             cbSwitchV.Text = "v - Create volumes with size=<size>*1000 [*1024, *1]";
             cbSwitchV.UseVisualStyleBackColor = true;
             // 
-            // rbOptionsV1
+            // rbSwitchSizeGB
             // 
-            rbOptionsV1.AutoSize = true;
-            rbOptionsV1.Enabled = false;
-            rbOptionsV1.Location = new System.Drawing.Point(560, 21);
-            rbOptionsV1.Name = "rbOptionsV1";
-            rbOptionsV1.Size = new System.Drawing.Size(31, 19);
-            rbOptionsV1.TabIndex = 20;
-            rbOptionsV1.Text = "1";
-            rbOptionsV1.UseVisualStyleBackColor = true;
+            rbSwitchSizeGB.AutoSize = true;
+            rbSwitchSizeGB.Enabled = false;
+            rbSwitchSizeGB.Location = new System.Drawing.Point(454, 72);
+            rbSwitchSizeGB.Name = "rbSwitchSizeGB";
+            rbSwitchSizeGB.Size = new System.Drawing.Size(96, 19);
+            rbSwitchSizeGB.TabIndex = 20;
+            rbSwitchSizeGB.Text = "GB - 1000 MB";
+            rbSwitchSizeGB.UseVisualStyleBackColor = true;
             // 
-            // nupOptionsV
+            // rbSwitchSizeMB
             // 
-            nupOptionsV.Enabled = false;
-            nupOptionsV.Location = new System.Drawing.Point(314, 21);
-            nupOptionsV.Maximum = new decimal(new int[] { 999999999, 0, 0, 0 });
-            nupOptionsV.Name = "nupOptionsV";
-            nupOptionsV.Size = new System.Drawing.Size(112, 23);
-            nupOptionsV.TabIndex = 17;
-            nupOptionsV.Value = new decimal(new int[] { 2, 0, 0, 0 });
-            // 
-            // label8
-            // 
-            label8.AutoSize = true;
-            label8.Location = new System.Drawing.Point(432, 23);
-            label8.Name = "label8";
-            label8.Size = new System.Drawing.Size(12, 15);
-            label8.TabIndex = 19;
-            label8.Text = "*";
-            // 
-            // rbOptionsV1024
-            // 
-            rbOptionsV1024.AutoSize = true;
-            rbOptionsV1024.Checked = true;
-            rbOptionsV1024.Enabled = false;
-            rbOptionsV1024.Location = new System.Drawing.Point(505, 21);
-            rbOptionsV1024.Name = "rbOptionsV1024";
-            rbOptionsV1024.Size = new System.Drawing.Size(49, 19);
-            rbOptionsV1024.TabIndex = 18;
-            rbOptionsV1024.TabStop = true;
-            rbOptionsV1024.Text = "1024";
-            rbOptionsV1024.UseVisualStyleBackColor = true;
+            rbSwitchSizeMB.AutoSize = true;
+            rbSwitchSizeMB.Checked = true;
+            rbSwitchSizeMB.Enabled = false;
+            rbSwitchSizeMB.Location = new System.Drawing.Point(454, 47);
+            rbSwitchSizeMB.Name = "rbSwitchSizeMB";
+            rbSwitchSizeMB.Size = new System.Drawing.Size(95, 19);
+            rbSwitchSizeMB.TabIndex = 18;
+            rbSwitchSizeMB.TabStop = true;
+            rbSwitchSizeMB.Text = "MB - 1000 KB";
+            rbSwitchSizeMB.UseVisualStyleBackColor = true;
             // 
             // cbSwitchR
             // 
@@ -730,7 +717,7 @@ namespace WinRARRed.Forms
             groupBox8.Controls.Add(cbSwitchMD64K);
             groupBox8.Location = new System.Drawing.Point(6, 189);
             groupBox8.Name = "groupBox8";
-            groupBox8.Size = new System.Drawing.Size(670, 108);
+            groupBox8.Size = new System.Drawing.Size(692, 108);
             groupBox8.TabIndex = 7;
             groupBox8.TabStop = false;
             groupBox8.Text = "Dictionary sizes";
@@ -1008,16 +995,25 @@ namespace WinRARRed.Forms
             // 
             // btnSave
             // 
-            btnSave.Location = new System.Drawing.Point(1045, 760);
+            btnSave.Location = new System.Drawing.Point(1049, 803);
             btnSave.Name = "btnSave";
             btnSave.Size = new System.Drawing.Size(75, 23);
             btnSave.TabIndex = 35;
             btnSave.Text = "Save";
             btnSave.UseVisualStyleBackColor = true;
             // 
+            // btnImportSrr
+            // 
+            btnImportSrr.Location = new System.Drawing.Point(805, 803);
+            btnImportSrr.Name = "btnImportSrr";
+            btnImportSrr.Size = new System.Drawing.Size(120, 23);
+            btnImportSrr.TabIndex = 44;
+            btnImportSrr.Text = "Import from SRR";
+            btnImportSrr.UseVisualStyleBackColor = true;
+            // 
             // btnCancel
             // 
-            btnCancel.Location = new System.Drawing.Point(931, 760);
+            btnCancel.Location = new System.Drawing.Point(931, 803);
             btnCancel.Name = "btnCancel";
             btnCancel.Size = new System.Drawing.Size(75, 23);
             btnCancel.TabIndex = 36;
@@ -1029,7 +1025,7 @@ namespace WinRARRed.Forms
             cbDeleteRARFiles.AutoSize = true;
             cbDeleteRARFiles.Checked = true;
             cbDeleteRARFiles.CheckState = System.Windows.Forms.CheckState.Checked;
-            cbDeleteRARFiles.Location = new System.Drawing.Point(12, 760);
+            cbDeleteRARFiles.Location = new System.Drawing.Point(12, 803);
             cbDeleteRARFiles.Name = "cbDeleteRARFiles";
             cbDeleteRARFiles.Size = new System.Drawing.Size(261, 19);
             cbDeleteRARFiles.TabIndex = 26;
@@ -1078,21 +1074,74 @@ namespace WinRARRed.Forms
             groupBox5.Controls.Add(checkBox1);
             groupBox5.Controls.Add(checkBox3);
             groupBox5.Controls.Add(checkBox2);
-            groupBox5.Location = new System.Drawing.Point(886, 12);
+            groupBox5.Location = new System.Drawing.Point(909, 12);
             groupBox5.Name = "groupBox5";
             groupBox5.Size = new System.Drawing.Size(234, 100);
             groupBox5.TabIndex = 43;
             groupBox5.TabStop = false;
             groupBox5.Text = "Checkbox legend";
             // 
+            // rbSwitchSizeKiB
+            // 
+            rbSwitchSizeKiB.AutoSize = true;
+            rbSwitchSizeKiB.Enabled = false;
+            rbSwitchSizeKiB.Location = new System.Drawing.Point(565, 22);
+            rbSwitchSizeKiB.Name = "rbSwitchSizeKiB";
+            rbSwitchSizeKiB.Size = new System.Drawing.Size(108, 19);
+            rbSwitchSizeKiB.TabIndex = 22;
+            rbSwitchSizeKiB.Text = "KiB - 1024 bytes";
+            rbSwitchSizeKiB.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeMiB
+            // 
+            rbSwitchSizeMiB.AutoSize = true;
+            rbSwitchSizeMiB.Enabled = false;
+            rbSwitchSizeMiB.Location = new System.Drawing.Point(565, 47);
+            rbSwitchSizeMiB.Name = "rbSwitchSizeMiB";
+            rbSwitchSizeMiB.Size = new System.Drawing.Size(101, 19);
+            rbSwitchSizeMiB.TabIndex = 23;
+            rbSwitchSizeMiB.Text = "MiB - 1024 KiB";
+            rbSwitchSizeMiB.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeGiB
+            // 
+            rbSwitchSizeGiB.AutoSize = true;
+            rbSwitchSizeGiB.Enabled = false;
+            rbSwitchSizeGiB.Location = new System.Drawing.Point(565, 72);
+            rbSwitchSizeGiB.Name = "rbSwitchSizeGiB";
+            rbSwitchSizeGiB.Size = new System.Drawing.Size(102, 19);
+            rbSwitchSizeGiB.TabIndex = 24;
+            rbSwitchSizeGiB.Text = "GiB - 1024 MiB";
+            rbSwitchSizeGiB.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeBytes
+            // 
+            rbSwitchSizeBytes.AutoSize = true;
+            rbSwitchSizeBytes.Enabled = false;
+            rbSwitchSizeBytes.Location = new System.Drawing.Point(395, 22);
+            rbSwitchSizeBytes.Name = "rbSwitchSizeBytes";
+            rbSwitchSizeBytes.Size = new System.Drawing.Size(53, 19);
+            rbSwitchSizeBytes.TabIndex = 25;
+            rbSwitchSizeBytes.Text = "bytes";
+            rbSwitchSizeBytes.UseVisualStyleBackColor = true;
+            // 
+            // tbSwitchSize
+            // 
+            tbSwitchSize.Location = new System.Drawing.Point(314, 20);
+            tbSwitchSize.Name = "tbSwitchSize";
+            tbSwitchSize.Size = new System.Drawing.Size(75, 23);
+            tbSwitchSize.TabIndex = 26;
+            tbSwitchSize.Text = "1";
+            // 
             // SettingsOptionsForm
             // 
             AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            ClientSize = new System.Drawing.Size(1132, 791);
+            ClientSize = new System.Drawing.Size(1154, 839);
             Controls.Add(groupBox5);
             Controls.Add(cbDeleteRARFiles);
             Controls.Add(btnCancel);
+            Controls.Add(btnImportSrr);
             Controls.Add(btnSave);
             Controls.Add(label1);
             Controls.Add(gbFileOptions);
@@ -1124,7 +1173,6 @@ namespace WinRARRed.Forms
             groupBox10.ResumeLayout(false);
             groupBox9.ResumeLayout(false);
             groupBox9.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)nupOptionsV).EndInit();
             groupBox8.ResumeLayout(false);
             groupBox8.PerformLayout();
             groupBox7.ResumeLayout(false);
@@ -1160,12 +1208,10 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.Label label18;
         private System.Windows.Forms.GroupBox groupBox10;
         private System.Windows.Forms.GroupBox groupBox9;
-        private System.Windows.Forms.RadioButton rbOptionsV1000;
+        private System.Windows.Forms.RadioButton rbSwitchSizeKB;
         private System.Windows.Forms.CheckBox cbSwitchV;
-        private System.Windows.Forms.RadioButton rbOptionsV1;
-        private System.Windows.Forms.NumericUpDown nupOptionsV;
-        private System.Windows.Forms.Label label8;
-        private System.Windows.Forms.RadioButton rbOptionsV1024;
+        private System.Windows.Forms.RadioButton rbSwitchSizeGB;
+        private System.Windows.Forms.RadioButton rbSwitchSizeMB;
         private System.Windows.Forms.CheckBox cbSwitchR;
         private System.Windows.Forms.GroupBox groupBox8;
         private System.Windows.Forms.CheckBox cbSwitchMD1G;
@@ -1195,6 +1241,7 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.CheckBox cbSwitchM0;
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.Button btnSave;
+        private System.Windows.Forms.Button btnImportSrr;
         private System.Windows.Forms.Button btnCancel;
         private System.Windows.Forms.CheckBox cbFileA;
         private System.Windows.Forms.Label label3;
@@ -1225,5 +1272,10 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.CheckBox checkBox2;
         private System.Windows.Forms.CheckBox checkBox3;
         private System.Windows.Forms.GroupBox groupBox5;
+        private System.Windows.Forms.RadioButton rbSwitchSizeBytes;
+        private System.Windows.Forms.RadioButton rbSwitchSizeGiB;
+        private System.Windows.Forms.RadioButton rbSwitchSizeMiB;
+        private System.Windows.Forms.RadioButton rbSwitchSizeKiB;
+        private System.Windows.Forms.TextBox tbSwitchSize;
     }
 }

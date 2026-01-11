@@ -2,9 +2,9 @@
 
 namespace WinRARRed.IO
 {
-    public class FileCompressionOperationProgressEventArgs(long operationSize, long operationProgressed, DateTime startDateTime, string compressedFilePath) : OperationProgressEventArgs(operationSize, operationProgressed, startDateTime)
+    public class FileCompressionOperationProgressEventArgs(long operationSize, long operationProgressed, DateTime startDateTime, string filePath) : OperationProgressEventArgs(operationSize, operationProgressed, startDateTime)
     {
-        public string CompressedFilePath { get; } = compressedFilePath;
+        public string FilePath { get; } = filePath;
 
         public bool Cancelled { get; private set; }
 
