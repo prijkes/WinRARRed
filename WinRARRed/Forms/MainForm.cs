@@ -210,7 +210,7 @@ namespace WinRARRed.Forms
                 return;
             }
 
-            if (Directory.EnumerateDirectories(inputDirectory).Any())
+            if (Directory.EnumerateDirectories(inputDirectory).Any() && OptionsForm.RAROptions.DirectoryTimestamps.Count == 0)
             {
                 ModifiedDateWarningForm form = new();
                 if (form.ShowDialog(this) == DialogResult.Cancel)
@@ -495,7 +495,30 @@ namespace WinRARRed.Forms
 
             try
             {
-                tbLog.AppendText(strBuilder.ToString());
+                // Check if log has exceeded 1000 lines
+                int lineCount = tbLog.Lines.Length;
+                if (lineCount > 1000)
+                {
+                    tbLog.Clear();
+                }
+
+                if (cbAutoScroll.Checked)
+                {
+                    tbLog.AppendText(strBuilder.ToString());
+                }
+                else
+                {
+                    // Save current scroll position
+                    int selectionStart = tbLog.SelectionStart;
+                    int selectionLength = tbLog.SelectionLength;
+                    
+                    // Append text without scrolling
+                    tbLog.Text += strBuilder.ToString();
+                    
+                    // Restore scroll position
+                    tbLog.SelectionStart = selectionStart;
+                    tbLog.SelectionLength = selectionLength;
+                }
             }
             catch (ObjectDisposedException)
             {

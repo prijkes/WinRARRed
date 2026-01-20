@@ -42,6 +42,7 @@ namespace WinRARRed
         private readonly Dictionary<RARProcess, StreamWriter> ProcessLogWriters = [];
         private readonly HashSet<RARProcess> ActiveProcesses = [];
         private readonly object ProcessLock = new();
+        private string? CommentFilePath = null;
 
         [GeneratedRegex("(?:win)?(?:rar|wr)(?:-x64|-x32)?-?(\\d+)(?:b\\d+)?", RegexOptions.IgnoreCase)]
         private static partial Regex GeneratedRARVersionRegex();
@@ -130,6 +131,7 @@ namespace WinRARRed
         public async Task<bool> BruteForceRARVersionAsync(BruteForceOptions options)
         {
             Log.Information(this, $"Starting brute force operation. Release: {options.ReleaseDirectoryPath}, Output: {options.OutputDirectoryPath}");
+            Log.Information(this, $"Expected {options.HashType} hash(es) for first volume: {string.Join(", ", options.Hashes)}");
             BruteForceOptions = options;
 
             DateTime bruteForceStartDateTime = DateTime.Now;
@@ -383,6 +385,10 @@ namespace WinRARRed
             {
                 // Normal cancellation, ignore
             }
+            catch (ObjectDisposedException)
+            {
+                // CTS was disposed after the process completed, ignore
+            }
             catch (Exception ex)
             {
                 Log.Debug(this, $"Error monitoring for second volume: {ex.Message}");
@@ -625,8 +631,16 @@ namespace WinRARRed
 
                 FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
 
+                // Build final arguments list, including comment option if available
+                List<string> finalArguments = [.. filteredArguments];
+                if (!string.IsNullOrEmpty(CommentFilePath))
+                {
+                    // Add comment option: -z<commentfile>
+                    finalArguments.Add($"-z{CommentFilePath}");
+                }
+
                 // Run RAR with inputFilesDir as working directory, output to rarOutputDir
-                await RARCompressDirectoryAsync(rarExeFilePath, inputFilesDir, rarFilePath, filteredArguments, CancellationTokenSource.Token);
+                await RARCompressDirectoryAsync(rarExeFilePath, inputFilesDir, rarFilePath, finalArguments, CancellationTokenSource.Token);
 
                 currentProgress++;
                 FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
@@ -665,11 +679,7 @@ namespace WinRARRed
                         // Delete all volumes including first
                         DeleteRARFileAndVolumes(actualRarFilePath);
                     }
-                    else
-                    {
-                        // Keep first volume but delete extra volumes to save space
-                        DeleteExtraVolumes(actualRarFilePath);
-                    }
+                    // If DeleteRARFiles is false, keep all files for debugging
 
                     continue;
                 }
@@ -1063,7 +1073,103 @@ namespace WinRARRed
                 ValidateArchiveFileCrcs(inputFilesDir, options.RAROptions.ArchiveFileCrcs);
             }
 
+            int fileTimestampCount = options.RAROptions.FileTimestamps.Count;
+            int fileCreationCount = options.RAROptions.FileCreationTimes.Count;
+            int fileAccessCount = options.RAROptions.FileAccessTimes.Count;
+            // Apply file timestamps before directory timestamps to keep directory times authoritative.
+            if (fileTimestampCount + fileCreationCount + fileAccessCount > 0)
+            {
+                Log.Information(this, $"Applying file timestamps: mtime {fileTimestampCount}, ctime {fileCreationCount}, atime {fileAccessCount}");
+                ApplyFileTimestamps(inputFilesDir, options.RAROptions.FileTimestamps, options.RAROptions.FileCreationTimes, options.RAROptions.FileAccessTimes);
+            }
+
+            int dirTimestampCount = options.RAROptions.DirectoryTimestamps.Count;
+            int dirCreationCount = options.RAROptions.DirectoryCreationTimes.Count;
+            int dirAccessCount = options.RAROptions.DirectoryAccessTimes.Count;
+            if (dirTimestampCount + dirCreationCount + dirAccessCount > 0)
+            {
+                Log.Information(this, $"Applying directory timestamps: mtime {dirTimestampCount}, ctime {dirCreationCount}, atime {dirAccessCount}");
+                ApplyDirectoryTimestamps(inputFilesDir, options.RAROptions.DirectoryTimestamps, options.RAROptions.DirectoryCreationTimes, options.RAROptions.DirectoryAccessTimes);
+            }
+
+            // Create comment file if archive has a comment
+            CommentFilePath = null;
+            if (!string.IsNullOrEmpty(options.RAROptions.ArchiveComment))
+            {
+                string commentFilePath = Path.Combine(options.OutputDirectoryPath, "comment.txt");
+                try
+                {
+                    File.WriteAllText(commentFilePath, options.RAROptions.ArchiveComment, Encoding.UTF8);
+                    CommentFilePath = commentFilePath;
+                    Log.Information(this, $"Created comment file: {commentFilePath} ({options.RAROptions.ArchiveComment.Length} chars)");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(this, $"Failed to create comment file: {ex.Message}");
+                }
+            }
+
             return inputFilesDir;
+        }
+
+        private void ApplyFileTimestamps(string inputDirectory, Dictionary<string, DateTime> modifiedTimes, Dictionary<string, DateTime> creationTimes, Dictionary<string, DateTime> accessTimes)
+        {
+            // Order matters: set creation/access first so modified time ends up as the final write.
+            ApplyFileTimestampEntries(inputDirectory, creationTimes, File.SetCreationTime, "creation");
+            ApplyFileTimestampEntries(inputDirectory, accessTimes, File.SetLastAccessTime, "access");
+            ApplyFileTimestampEntries(inputDirectory, modifiedTimes, File.SetLastWriteTime, "modified");
+        }
+
+        private void ApplyFileTimestampEntries(string inputDirectory, Dictionary<string, DateTime> timestamps, Action<string, DateTime> setter, string label)
+        {
+            foreach (KeyValuePair<string, DateTime> entry in timestamps)
+            {
+                string relativePath = entry.Key;
+                string filePath = Path.Combine(inputDirectory, relativePath);
+                if (!File.Exists(filePath))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    setter(filePath, entry.Value);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(this, $"Failed to set {label} timestamp for file {relativePath}: {ex.Message}");
+                }
+            }
+        }
+
+        private void ApplyDirectoryTimestamps(string inputDirectory, Dictionary<string, DateTime> modifiedTimes, Dictionary<string, DateTime> creationTimes, Dictionary<string, DateTime> accessTimes)
+        {
+            // Order matters: set creation/access first so modified time ends up as the final write.
+            ApplyDirectoryTimestampEntries(inputDirectory, creationTimes, Directory.SetCreationTime, "creation");
+            ApplyDirectoryTimestampEntries(inputDirectory, accessTimes, Directory.SetLastAccessTime, "access");
+            ApplyDirectoryTimestampEntries(inputDirectory, modifiedTimes, Directory.SetLastWriteTime, "modified");
+        }
+
+        private void ApplyDirectoryTimestampEntries(string inputDirectory, Dictionary<string, DateTime> timestamps, Action<string, DateTime> setter, string label)
+        {
+            foreach (KeyValuePair<string, DateTime> entry in timestamps)
+            {
+                string relativePath = entry.Key;
+                string dirPath = Path.Combine(inputDirectory, relativePath);
+                if (!Directory.Exists(dirPath))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    setter(dirPath, entry.Value);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(this, $"Failed to set {label} timestamp for directory {relativePath}: {ex.Message}");
+                }
+            }
         }
     }
 }

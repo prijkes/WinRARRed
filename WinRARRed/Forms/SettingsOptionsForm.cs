@@ -14,7 +14,14 @@ namespace WinRARRed.Forms
         public event EventHandler<string>? VerificationFileExtracted;
         private HashSet<string> ImportedArchiveFiles = new(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> ImportedArchiveDirectories = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedDirectoryTimestamps = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedDirectoryCreationTimes = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedDirectoryAccessTimes = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedFileTimestamps = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedFileCreationTimes = new(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, DateTime> ImportedFileAccessTimes = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string> ImportedArchiveFileCrcs = new(StringComparer.OrdinalIgnoreCase);
+        private string? ImportedArchiveComment = null;
 
         public SettingsOptionsForm()
         {
@@ -232,6 +239,12 @@ namespace WinRARRed.Forms
                 List<string> importedSettings = [];
                 ImportedArchiveFiles = new HashSet<string>(srr.ArchivedFiles, StringComparer.OrdinalIgnoreCase);
                 ImportedArchiveDirectories = new HashSet<string>(srr.ArchivedDirectories, StringComparer.OrdinalIgnoreCase);
+                ImportedDirectoryTimestamps = new Dictionary<string, DateTime>(srr.ArchivedDirectoryTimestamps, StringComparer.OrdinalIgnoreCase);
+                ImportedDirectoryCreationTimes = new Dictionary<string, DateTime>(srr.ArchivedDirectoryCreationTimes, StringComparer.OrdinalIgnoreCase);
+                ImportedDirectoryAccessTimes = new Dictionary<string, DateTime>(srr.ArchivedDirectoryAccessTimes, StringComparer.OrdinalIgnoreCase);
+                ImportedFileTimestamps = new Dictionary<string, DateTime>(srr.ArchivedFileTimestamps, StringComparer.OrdinalIgnoreCase);
+                ImportedFileCreationTimes = new Dictionary<string, DateTime>(srr.ArchivedFileCreationTimes, StringComparer.OrdinalIgnoreCase);
+                ImportedFileAccessTimes = new Dictionary<string, DateTime>(srr.ArchivedFileAccessTimes, StringComparer.OrdinalIgnoreCase);
                 ImportedArchiveFileCrcs = new Dictionary<string, string>(srr.ArchivedFileCrcs, StringComparer.OrdinalIgnoreCase);
                 if (ImportedArchiveFiles.Count > 0 || ImportedArchiveDirectories.Count > 0)
                 {
@@ -242,27 +255,42 @@ namespace WinRARRed.Forms
                 {
                     importedSettings.Add("Archive entries: none (all files will be used)");
                 }
+
+                if (ImportedDirectoryTimestamps.Count > 0 || ImportedDirectoryCreationTimes.Count > 0 || ImportedDirectoryAccessTimes.Count > 0)
+                {
+                    importedSettings.Add($"Directory times: mtime {ImportedDirectoryTimestamps.Count}, ctime {ImportedDirectoryCreationTimes.Count}, atime {ImportedDirectoryAccessTimes.Count}");
+                }
+
+                if (ImportedFileTimestamps.Count > 0 || ImportedFileCreationTimes.Count > 0 || ImportedFileAccessTimes.Count > 0)
+                {
+                    importedSettings.Add($"File times: mtime {ImportedFileTimestamps.Count}, ctime {ImportedFileCreationTimes.Count}, atime {ImportedFileAccessTimes.Count}");
+                }
+
                 if (ImportedArchiveFileCrcs.Count > 0)
                 {
                     importedSettings.Add($"File CRC32 entries: {ImportedArchiveFileCrcs.Count}");
-                    int sampleCount = 0;
+                    // Log every CRC entry so users can verify all files were imported.
                     foreach (KeyValuePair<string, string> crcEntry in ImportedArchiveFileCrcs.OrderBy(entry => entry.Key))
                     {
-                        if (sampleCount >= 5)
-                        {
-                            break;
-                        }
-
                         Log.Debug(this, $"[SRR] CRC entry: {crcEntry.Key} = {crcEntry.Value}");
-                        sampleCount++;
                     }
                 }
-                
-                // Set compression method
+
+                // Store archive comment if present
+                ImportedArchiveComment = srr.ArchiveComment;
+                if (!string.IsNullOrEmpty(ImportedArchiveComment))
+                {
+                    int commentLen = ImportedArchiveComment.Length;
+                    string truncated = commentLen > 50 ? ImportedArchiveComment[..50] + "..." : ImportedArchiveComment;
+                    importedSettings.Add($"Archive comment: {commentLen} chars");
+                    Log.Information(this, $"[SRR] Archive comment ({commentLen} chars): {truncated.Replace("\r", "").Replace("\n", " ")}");
+                }
+
+                // Set compression method (already 0-5 from RARHeaderReader)
                 if (srr.CompressionMethod.HasValue)
                 {
-                    int method = srr.CompressionMethod.Value - 0x30;
-                    
+                    int method = srr.CompressionMethod.Value;
+
                     if (method >= 0 && method <= 5)
                     {
                          cbSwitchM0.Checked = method == 0;
@@ -634,7 +662,14 @@ namespace WinRARRed.Forms
                 DeleteRARFiles = cbDeleteRARFiles.Checked,
                 ArchiveFileCrcs = new Dictionary<string, string>(ImportedArchiveFileCrcs, StringComparer.OrdinalIgnoreCase),
                 ArchiveFilePaths = new HashSet<string>(ImportedArchiveFiles, StringComparer.OrdinalIgnoreCase),
-                ArchiveDirectoryPaths = new HashSet<string>(ImportedArchiveDirectories, StringComparer.OrdinalIgnoreCase)
+                ArchiveDirectoryPaths = new HashSet<string>(ImportedArchiveDirectories, StringComparer.OrdinalIgnoreCase),
+                DirectoryTimestamps = new Dictionary<string, DateTime>(ImportedDirectoryTimestamps, StringComparer.OrdinalIgnoreCase),
+                DirectoryCreationTimes = new Dictionary<string, DateTime>(ImportedDirectoryCreationTimes, StringComparer.OrdinalIgnoreCase),
+                DirectoryAccessTimes = new Dictionary<string, DateTime>(ImportedDirectoryAccessTimes, StringComparer.OrdinalIgnoreCase),
+                FileTimestamps = new Dictionary<string, DateTime>(ImportedFileTimestamps, StringComparer.OrdinalIgnoreCase),
+                FileCreationTimes = new Dictionary<string, DateTime>(ImportedFileCreationTimes, StringComparer.OrdinalIgnoreCase),
+                FileAccessTimes = new Dictionary<string, DateTime>(ImportedFileAccessTimes, StringComparer.OrdinalIgnoreCase),
+                ArchiveComment = ImportedArchiveComment
             };
         }
 
@@ -726,7 +761,8 @@ namespace WinRARRed.Forms
 
                                     for (int x = 0; x < (cbSwitchAI.Checked ? 2 : 1); x++)
                                     {
-                                        for (int z = cbSwitchMT.Checked ? (int)nupSwitchMTStart.Value - 1 : 0; z < (cbSwitchMT.Checked ? (int)nupSwitchMTEnd.Value + 1 : 1); z++)
+                                        // Thread sweep: inclusive [start, end]; skip the stray iteration that produced no -mt.
+                                        for (int z = cbSwitchMT.Checked ? (int)nupSwitchMTStart.Value : 0; z < (cbSwitchMT.Checked ? (int)nupSwitchMTEnd.Value + 1 : 1); z++)
                                         {
                                             List<RARCommandLineArgument> switches =
                                                 [
@@ -855,7 +891,7 @@ namespace WinRARRed.Forms
                                             }
 
                                             // -mt<threads> Set the number of threads
-                                            if (z >= nupSwitchMTStart.Value && cbSwitchMT.Checked)
+                                            if (cbSwitchMT.Checked)
                                             {
                                                 switches.Add(new($"-mt{z}", 360));
                                             }

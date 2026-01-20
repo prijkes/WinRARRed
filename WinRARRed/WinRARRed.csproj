@@ -20,4 +20,8 @@
     <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\RARLib\RARLib.csproj" />
+  </ItemGroup>
+
 </Project>

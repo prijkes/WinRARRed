@@ -41,12 +41,60 @@ namespace WinRARRed
         /// </value>
         public bool DeleteRARFiles { get; set; }
 
+        /// <summary>
+        /// Gets or sets expected CRC32 values for archived files (relative paths).
+        /// </summary>
         public Dictionary<string, string> ArchiveFileCrcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Gets or sets the file paths to include when an SRR file list is present.
+        /// </summary>
         public HashSet<string> ArchiveFilePaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Gets or sets the directory paths to include when an SRR file list is present.
+        /// </summary>
         public HashSet<string> ArchiveDirectoryPaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Gets or sets directory modified times (mtime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> DirectoryTimestamps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets directory creation times (ctime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> DirectoryCreationTimes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets directory access times (atime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> DirectoryAccessTimes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets file modified times (mtime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> FileTimestamps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets file creation times (ctime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> FileCreationTimes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets or sets file access times (atime) keyed by relative path.
+        /// </summary>
+        public Dictionary<string, DateTime> FileAccessTimes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets a value indicating whether the SRR file list restricts inputs.
+        /// </summary>
         public bool HasArchiveFileList => ArchiveFilePaths.Count > 0 || ArchiveDirectoryPaths.Count > 0;
+
+        /// <summary>
+        /// Gets or sets the archive comment to include when creating RAR files.
+        /// Extracted from the CMT sub-block in the SRR file.
+        /// </summary>
+        public string? ArchiveComment { get; set; }
     }
 }

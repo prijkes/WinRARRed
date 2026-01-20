@@ -61,6 +61,7 @@ namespace WinRARRed.Forms
             opStatus2 = new WinRARRed.Controls.OperationProgressStatusUserControl();
             opStatus1 = new WinRARRed.Controls.OperationProgressStatusUserControl();
             btnClearLog = new System.Windows.Forms.Button();
+            cbAutoScroll = new System.Windows.Forms.CheckBox();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
             groupBox3.SuspendLayout();
@@ -370,11 +371,24 @@ namespace WinRARRed.Forms
             btnClearLog.Text = "Clear log";
             btnClearLog.UseVisualStyleBackColor = true;
             // 
+            // cbAutoScroll
+            // 
+            cbAutoScroll.AutoSize = true;
+            cbAutoScroll.Checked = true;
+            cbAutoScroll.CheckState = System.Windows.Forms.CheckState.Checked;
+            cbAutoScroll.Location = new System.Drawing.Point(93, 410);
+            cbAutoScroll.Name = "cbAutoScroll";
+            cbAutoScroll.Size = new System.Drawing.Size(83, 19);
+            cbAutoScroll.TabIndex = 20;
+            cbAutoScroll.Text = "Auto scroll";
+            cbAutoScroll.UseVisualStyleBackColor = true;
+            // 
             // MainForm
             // 
             AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             ClientSize = new System.Drawing.Size(1596, 761);
+            Controls.Add(cbAutoScroll);
             Controls.Add(btnClearLog);
             Controls.Add(opStatus2);
             Controls.Add(opStatus1);
@@ -438,6 +452,7 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.ToolStripMenuItem tsmiView;
         private System.Windows.Forms.ToolStripMenuItem tsmiViewCommandLines;
         private System.Windows.Forms.Button btnClearLog;
+        private System.Windows.Forms.CheckBox cbAutoScroll;
     }
 }
 
