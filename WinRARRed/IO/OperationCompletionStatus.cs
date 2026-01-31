@@ -1,11 +1,22 @@
-﻿namespace WinRARRed.IO
+﻿namespace WinRARRed.IO;
+
+/// <summary>
+/// Specifies the outcome of a completed operation.
+/// </summary>
+public enum OperationCompletionStatus
 {
-    public enum OperationCompletionStatus
-    {
-        Cancelled,
+    /// <summary>
+    /// The operation was cancelled by the user.
+    /// </summary>
+    Cancelled,
 
-        Error,
+    /// <summary>
+    /// The operation failed due to an error.
+    /// </summary>
+    Error,
 
-        Success
-    }
+    /// <summary>
+    /// The operation completed successfully.
+    /// </summary>
+    Success
 }

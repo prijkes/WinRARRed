@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RARLib\RARLib.csproj" />
+    <ProjectReference Include="..\SRRLib\SRRLib.csproj" />
   </ItemGroup>
 
 </Project>

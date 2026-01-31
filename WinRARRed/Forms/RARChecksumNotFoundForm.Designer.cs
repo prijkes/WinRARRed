@@ -1,7 +1,7 @@
-﻿namespace WinRARRed.Forms
+﻿namespace WinRARRed.Forms;
+
+partial class RARChecksumNotFoundForm
 {
-    partial class RARChecksumNotFoundForm
-    {
         /// <summary>
         /// Required designer variable.
         /// </summary>
@@ -103,6 +103,5 @@
         private System.Windows.Forms.Panel panel1;
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.Button btnOK;
-        private Controls.SystemIconError systemIconError1;
-    }
+    private Controls.SystemIconError systemIconError1;
 }

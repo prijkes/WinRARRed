@@ -1,4 +1,3 @@
-﻿namespace WinRARRed.IO
-{
-    internal record FileCompressionFilePartCreatedEventArgs(ICompressedFile CompressedFile);
-}
+﻿namespace WinRARRed.IO;
+
+internal record FileCompressionFilePartCreatedEventArgs(ICompressedFile CompressedFile);

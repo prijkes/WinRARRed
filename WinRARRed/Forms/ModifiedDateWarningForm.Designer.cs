@@ -1,7 +1,7 @@
-﻿namespace WinRARRed.Forms
+﻿namespace WinRARRed.Forms;
+
+partial class ModifiedDateWarningForm
 {
-    partial class ModifiedDateWarningForm
-    {
         /// <summary>
         /// Required designer variable.
         /// </summary>
@@ -115,6 +115,5 @@
         private System.Windows.Forms.Button btnCancel;
         private System.Windows.Forms.Panel panel1;
         private System.Windows.Forms.Label label1;
-        private Controls.SystemIconWarning warningIcon1;
-    }
+    private Controls.SystemIconWarning warningIcon1;
 }

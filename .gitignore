@@ -128,3 +128,7 @@ $tf/
 # Windows image file caches
 Thumbs.db
 ehthumbs.db
+
+# Claude Code local preferences (personal, not shared)
+CLAUDE.local.md
+.claude/settings.local.json

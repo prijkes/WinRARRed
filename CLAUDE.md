@@ -1,165 +1,112 @@
-# WinRARRed Project Memory Bank
+# WinRARRed
 
-## Project Overview
+Windows Forms application for brute-forcing RAR archive parameters to reconstruct scene releases from SRR files.
 
-**WinRARRed** is a Windows Forms application for brute-forcing RAR archive parameters to match expected checksums, primarily used for scene release reconstruction from SRR (Scene Release Reconstruction) files.
+## WHAT - Tech Stack & Structure
 
-## Repository Structure
+- **.NET 8** Windows Forms application
+- **C# 12** with nullable reference types, file-scoped namespaces, primary constructors
+- **Multi-project solution:**
+  - `RARLib/` - RAR parsing and native decompression library
+  - `SRRLib/` - SRR file parsing library
+  - `WinRARRed/` - Main GUI application
+  - `tools/` - Python debugging/testing scripts
 
-```
-E:\Projects\WinRARRed\
-├── RARLib/                     # RAR parsing/decompression library
-│   ├── RARBlockType.cs         # RAR 4.x and 5.x block type enums
-│   ├── RARFlags.cs             # Archive, file, and end archive flags
-│   ├── RARFileHeader.cs        # RARFileHeader, RARArchiveHeader classes
-│   ├── RARHeaderReader.cs      # Header parsing, RARServiceBlockInfo
-│   ├── RARUtils.cs             # CRC, DOS dates, filename decoding
-│   └── Decompression/          # Native RAR decompression (NEW)
-│       ├── BitInput.cs         # Bit-level stream reading
-│       ├── PackDef.cs          # Compression constants
-│       ├── DecodeTable.cs      # Huffman decode tables
-│       ├── HuffmanDecoder.cs   # Huffman encoding/decoding
-│       ├── Unpack29.cs         # RAR 2.9/3.x LZSS decompressor
-│       ├── Unpack50.cs         # RAR 5.x LZSS decompressor
-│       ├── RARDecompressor.cs  # Facade class for decompression
-│       └── PPMd/               # PPMd implementation
-│           ├── RangeCoder.cs   # Carryless range coder
-│           ├── SubAllocator.cs # Memory sub-allocator
-│           └── ModelPPM.cs     # PPMd prediction model
-├── WinRARRed/                  # Main Windows Forms application
-│   ├── Forms/                  # UI forms
-│   ├── IO/                     # File I/O classes (SRRFile, RARFile, etc.)
-│   ├── Diagnostics/            # RARProcess, logging, event args
-│   └── Manager.cs              # Core brute force orchestration
-├── tools/                      # Python scripts for debugging
-│   ├── inspect_srr_headers.py  # SRR file header inspector
-│   └── inspect_rar_headers.py  # RAR file header inspector
-└── unrar/                      # Unrar 7.20 source code (reference)
+## WHY - Architecture Decisions
+
+**Separate libraries (RARLib, SRRLib):** Enables reuse and cleaner testing. RAR format parsing is complex and benefits from isolation.
+
+**Native decompression:** Implemented LZSS and PPMd decompressors (ported from unrar source) to extract compressed comments without external dependencies.
+
+**Two-phase brute-force:** Phase 1 tests comment blocks (fast, small data) to filter RAR versions, Phase 2 uses only matched versions for full RAR creation. Dramatically reduces search space.
+
+**Host OS patching:** RAR stores creator OS in headers. When brute-forcing on Windows for a Unix-created archive, we patch headers post-creation to match original.
+
+## HOW - Commands & Workflow
+
+```bash
+# Build
+dotnet build WinRARRed/WinRARRed.csproj
+
+# Run
+dotnet run --project WinRARRed/WinRARRed.csproj
+
+# Build release
+dotnet publish WinRARRed/WinRARRed.csproj -c Release
 ```
 
-## Current State
+### Python Tools (in `tools/`)
+```bash
+# Full RAR brute-force from SRR (CLI equivalent of WinRARRed)
+python tools/bruteforce_rar.py input.srr --rar-dir E:\WinRAR2 --output-dir output/
 
-### Completed Features
-- SRR file parsing with full RAR header extraction
-- Brute force RAR parameter combinations
-- Archive comment extraction from CMT sub-blocks
-  - Stored comments (method 0x30): native
-  - Compressed comments (0x31-0x35): native LZSS + PPMd with fallback to unrar.exe
-- Auto-scroll checkbox for log output
-- Log line limit (1000 lines)
-- CRC validation and logging
-- File/directory timestamp preservation from SRR
-- **Native RAR decompression library (LZSS + PPMd)** ✓
+# CMT block brute-force only
+python tools/bruteforce_cmt.py input.srr --rar-dir E:\WinRAR2
 
-### Decompression Implementation Status
-
-**COMPLETED:**
-- BitInput - Bit-level stream reading (ported from `getbits.hpp`)
-- DecodeTable - Huffman decoding tables (ported from `unpack.cpp`)
-- HuffmanDecoder - Huffman encoding/decoding
-- Unpack29 - RAR 2.9/3.x LZSS decompressor (ported from `unpack30.cpp`)
-- Unpack50 - RAR 5.x LZSS decompressor (ported from `unpack50.cpp`)
-- RangeCoder - PPMd carryless range coder (ported from `coder.cpp`)
-- SubAllocator - PPMd memory allocation (ported from `suballoc.cpp`)
-- ModelPPM - PPMd prediction model (ported from `model.cpp`)
-- RARDecompressor - Facade class with automatic algorithm selection
-- Integration into SRRFile comment extraction
-
-**PENDING TESTING:**
-- Real-world compressed comment decompression
-- PPMd edge cases
-
-## Key Technical Details
-
-### RAR Comment Block Structure (RAR 4.x)
-- Block type: 0x7A (Service)
-- Sub-type name: "CMT"
-- Compression methods:
-  - 0x30 = Store (uncompressed)
-  - 0x31-0x35 = Compressed (Fastest to Best)
-- Comments use 64KB dictionary window
-- CRC is 16-bit (lower 16 bits of CRC32)
-
-### RAR Compression Algorithms
-- **LZSS**: Huffman + LZ77 sliding window
-  - RAR 2.9/3.x: `Unpack29.cs`
-  - RAR 5.x: `Unpack50.cs`
-- **PPMd**: Prediction by Partial Matching with range coding
-  - `ModelPPM.cs` - Context modeling and symbol decoding
-  - `RangeCoder.cs` - Arithmetic coding
-  - `SubAllocator.cs` - Memory management
-
-### Decompression Architecture
-```
-RARDecompressor.Decompress(data, size, method, version)
-  ├── Store (0x30): Direct copy
-  ├── RAR 2.9/3.x (0x31-0x35):
-  │   ├── Try LZSS (Unpack29)
-  │   └── Fallback to PPMd (ModelPPM)
-  └── RAR 5.x:
-      └── LZSS (Unpack50)
+# Inspect SRR/RAR headers
+python tools/inspect_srr_headers.py file.srr
+python tools/inspect_rar_headers.py file.rar
 ```
 
-### Unrar Source Reference
-Located at `E:\unrar` (version 7.20)
+## Key Patterns
 
-Key files for decompression:
-- `getbits.hpp` - BitInput class
-- `unpack.hpp/cpp` - Main Unpack class, DecodeTable
-- `unpack30.cpp` - RAR 3.x (LZSS branch)
-- `unpack50.cpp` - RAR 5.x
-- `model.hpp/cpp` - PPMd model
-- `coder.hpp/cpp` - Range coder
-- `suballoc.hpp/cpp` - PPMd memory allocation
+- **Async/await** with CancellationToken for all long-running operations
+- **Events** for progress reporting (not callbacks)
+- **Options classes** (RAROptions, BruteForceOptions) for configuration
+- **Result pattern** preferred over exceptions for expected failures
 
-## Dependencies
+## Patterns to Avoid
 
-### RARLib
-- `Crc32.NET` (1.2.0) - CRC32 calculation
+- Don't use `Task.Run` for I/O-bound work
+- Don't catch generic `Exception` unless re-throwing
+- Don't use magic numbers - use constants from `RARLib.RAR4BlockType`, `RARFileFlags`, etc.
 
-### WinRARRed
-- `RARLib` (project reference)
-- `CliWrap` (3.10.0) - Process execution
-- `Crc32.NET` (1.2.0)
-- `SharpCompress` (0.33.0) - RAR extraction (not used for comments)
-- `Serilog` + sinks - Logging
+## External Dependencies
 
-## Recent Changes
+| Package | Version | Purpose |
+|---------|---------|---------|
+| Crc32.NET | 1.2.0 | CRC32 calculation |
+| CliWrap | 3.10.0 | Process execution wrapper |
+| SharpCompress | 0.33.0 | RAR extraction (backup) |
+| Serilog | latest | Structured logging |
 
-### Session 2026-01-19 (Continued)
-1. Implemented full native RAR decompression in RARLib/Decompression:
-   - BitInput.cs - Bit-level stream reading
-   - PackDef.cs - RAR compression constants
-   - DecodeTable.cs - Huffman decode table structures
-   - HuffmanDecoder.cs - MakeDecodeTables and DecodeNumber
-   - Unpack29.cs - RAR 2.9/3.x LZSS decompressor
-   - Unpack50.cs - RAR 5.x LZSS decompressor
-   - PPMd/RangeCoder.cs - Carryless range coder
-   - PPMd/SubAllocator.cs - Memory sub-allocator
-   - PPMd/ModelPPM.cs - PPMd prediction model
-   - RARDecompressor.cs - Facade with algorithm auto-selection
-2. Integrated native decompression into SRRFile.cs
-   - TryNativeDecompressComment() tries native first
-   - Falls back to unrar.exe if native fails
+## Domain Terminology
 
-### Session 2025-01-19
-1. Added archive comment extraction from SRR files
-2. Created RARLib as separate class library
-3. Moved RAR parsing code from WinRARRed to RARLib
-4. Updated namespaces and project references
+| Term | Meaning | Code Location |
+|------|---------|---------------|
+| **SRR** | Scene Release Reconstruction file - contains RAR headers without file data | `SRRLib/SRRFile.cs` |
+| **CMT** | Comment service block in RAR archives | `RARLib/RARHeaderReader.cs` |
+| **Host OS** | Operating system that created the RAR (stored in header byte 15) | `RAROptions.DetectedFileHostOS` |
+| **UnpVer** | Unpack version - indicates RAR format version (29=RAR3, 50=RAR5) | `RARFileHeader.UnpackVersion` |
+| **Phase 1** | Comment block brute-force to filter RAR versions | `Manager.BruteForceCommentPhaseAsync` |
+| **Phase 2** | Full RAR brute-force with matched versions | `Manager.TryProcessCommandLinesAsync` |
 
-### Previous Session
-1. Fixed CancellationTokenSource disposal error
-2. Added auto-scroll checkbox
-3. Added expected CRC logging
-4. Added 1000-line log limit
-5. Created Python inspector scripts
-6. Fixed RAR file deletion bug
+## Git Workflow
 
-## Notes
+- **Branches:** `feature/`, `fix/`, `refactor/`
+- **Commits:** `type: description` (feat, fix, refactor, docs, test)
+- **No force push** to master
+- **Test before commit** - at minimum, verify build succeeds
 
-- Scene releases typically use RAR 4.x format
-- Most comments are stored (0x30) or use LZSS compression
-- PPMd is rare for comments but implemented for 100% coverage
-- Native decompression is attempted first, with unrar.exe fallback
-- SharpCompress has RAR decompression but doesn't expose comment extraction API
+## Known Issues
+
+- **Skip `wrar30b1`, `wrar39b1`** - buggy beta versions that produce invalid archives
+- **RAR 5.50+ defaults to RAR5 format** - always use `-ma4` flag for RAR4 reconstruction
+- **RAR 3.0x dictionary options** - `-md128` may fail, use `-md128k` instead
+- **CMT File Time varies by version** - RAR 3.10-4.20 use zero, others use current time (must patch)
+
+## Documentation
+
+Detailed technical documentation in `WinRARRed/docs/`:
+- `rar-format.md` - RAR4/RAR5 format specification
+- `rar-cmt-block.md` - CMT block structure and patching
+- `rar-version-capabilities.md` - Version quirks and recommendations
+- `rar-version-options.md` - Full option compatibility matrix (281 versions)
+- `bruteforce-tools.md` - Python tool documentation
+
+## Rules
+
+@.claude/rules/architecture.md
+@.claude/rules/coding-conventions.md
+@.claude/rules/rar-technical.md
+@.claude/rules/brute-force.md

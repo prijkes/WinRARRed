@@ -1,12 +1,11 @@
 ﻿using System.Drawing;
 using System.Media;
 
-namespace WinRARRed.Controls
+namespace WinRARRed.Controls;
+
+public partial class SystemIconAsterisk : SystemIconControl
 {
-    public partial class SystemIconAsterisk : SystemIconControl
+    public SystemIconAsterisk() : base(SystemIcons.Asterisk, SystemSounds.Asterisk)
     {
-        public SystemIconAsterisk() : base(SystemIcons.Asterisk, SystemSounds.Asterisk)
-        {
-        }
     }
 }

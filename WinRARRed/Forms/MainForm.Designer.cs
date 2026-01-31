@@ -1,8 +1,7 @@
-﻿
-namespace WinRARRed.Forms
+﻿namespace WinRARRed.Forms;
+
+partial class MainForm
 {
-    partial class MainForm
-    {
         /// <summary>
         ///  Required designer variable.
         /// </summary>
@@ -45,7 +44,13 @@ namespace WinRARRed.Forms
             tbOutputDirectory = new System.Windows.Forms.TextBox();
             label4 = new System.Windows.Forms.Label();
             groupBox11 = new System.Windows.Forms.GroupBox();
-            tbLog = new System.Windows.Forms.TextBox();
+            tabControlLogs = new System.Windows.Forms.TabControl();
+            tabPageSystem = new System.Windows.Forms.TabPage();
+            tabPagePhase1 = new System.Windows.Forms.TabPage();
+            tabPagePhase2 = new System.Windows.Forms.TabPage();
+            rtbLogSystem = new System.Windows.Forms.RichTextBox();
+            rtbLogPhase1 = new System.Windows.Forms.RichTextBox();
+            rtbLogPhase2 = new System.Windows.Forms.RichTextBox();
             gbInput = new System.Windows.Forms.GroupBox();
             groupBox12 = new System.Windows.Forms.GroupBox();
             label19 = new System.Windows.Forms.Label();
@@ -58,6 +63,9 @@ namespace WinRARRed.Forms
             tsmiViewCommandLines = new System.Windows.Forms.ToolStripMenuItem();
             tsmiSettings = new System.Windows.Forms.ToolStripMenuItem();
             tsmiSettingsOptions = new System.Windows.Forms.ToolStripMenuItem();
+            tsmiTools = new System.Windows.Forms.ToolStripMenuItem();
+            tsmiToolsFileInspector = new System.Windows.Forms.ToolStripMenuItem();
+            tsmiToolsFileCompare = new System.Windows.Forms.ToolStripMenuItem();
             opStatus2 = new WinRARRed.Controls.OperationProgressStatusUserControl();
             opStatus1 = new WinRARRed.Controls.OperationProgressStatusUserControl();
             btnClearLog = new System.Windows.Forms.Button();
@@ -66,6 +74,10 @@ namespace WinRARRed.Forms
             groupBox2.SuspendLayout();
             groupBox3.SuspendLayout();
             groupBox11.SuspendLayout();
+            tabControlLogs.SuspendLayout();
+            tabPageSystem.SuspendLayout();
+            tabPagePhase1.SuspendLayout();
+            tabPagePhase2.SuspendLayout();
             gbInput.SuspendLayout();
             groupBox12.SuspendLayout();
             menuStrip1.SuspendLayout();
@@ -224,24 +236,94 @@ namespace WinRARRed.Forms
             // groupBox11
             // 
             groupBox11.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
-            groupBox11.Controls.Add(tbLog);
+            groupBox11.Controls.Add(tabControlLogs);
             groupBox11.Location = new System.Drawing.Point(12, 437);
             groupBox11.Name = "groupBox11";
             groupBox11.Size = new System.Drawing.Size(1577, 312);
             groupBox11.TabIndex = 3;
             groupBox11.TabStop = false;
             groupBox11.Text = "Log";
-            // 
-            // tbLog
-            // 
-            tbLog.Dock = System.Windows.Forms.DockStyle.Fill;
-            tbLog.Font = new System.Drawing.Font("Consolas", 9F);
-            tbLog.Location = new System.Drawing.Point(3, 19);
-            tbLog.Multiline = true;
-            tbLog.Name = "tbLog";
-            tbLog.ScrollBars = System.Windows.Forms.ScrollBars.Both;
-            tbLog.Size = new System.Drawing.Size(1571, 290);
-            tbLog.TabIndex = 0;
+            //
+            // tabControlLogs
+            //
+            tabControlLogs.Controls.Add(tabPageSystem);
+            tabControlLogs.Controls.Add(tabPagePhase1);
+            tabControlLogs.Controls.Add(tabPagePhase2);
+            tabControlLogs.Dock = System.Windows.Forms.DockStyle.Fill;
+            tabControlLogs.Location = new System.Drawing.Point(3, 19);
+            tabControlLogs.Name = "tabControlLogs";
+            tabControlLogs.SelectedIndex = 0;
+            tabControlLogs.Size = new System.Drawing.Size(1571, 290);
+            tabControlLogs.TabIndex = 0;
+            //
+            // tabPageSystem
+            //
+            tabPageSystem.Controls.Add(rtbLogSystem);
+            tabPageSystem.Location = new System.Drawing.Point(4, 24);
+            tabPageSystem.Name = "tabPageSystem";
+            tabPageSystem.Padding = new System.Windows.Forms.Padding(3);
+            tabPageSystem.Size = new System.Drawing.Size(1563, 262);
+            tabPageSystem.TabIndex = 0;
+            tabPageSystem.Text = "System";
+            tabPageSystem.UseVisualStyleBackColor = true;
+            //
+            // tabPagePhase1
+            //
+            tabPagePhase1.Controls.Add(rtbLogPhase1);
+            tabPagePhase1.Location = new System.Drawing.Point(4, 24);
+            tabPagePhase1.Name = "tabPagePhase1";
+            tabPagePhase1.Padding = new System.Windows.Forms.Padding(3);
+            tabPagePhase1.Size = new System.Drawing.Size(1563, 262);
+            tabPagePhase1.TabIndex = 1;
+            tabPagePhase1.Text = "Phase 1 (Comment)";
+            tabPagePhase1.UseVisualStyleBackColor = true;
+            //
+            // tabPagePhase2
+            //
+            tabPagePhase2.Controls.Add(rtbLogPhase2);
+            tabPagePhase2.Location = new System.Drawing.Point(4, 24);
+            tabPagePhase2.Name = "tabPagePhase2";
+            tabPagePhase2.Padding = new System.Windows.Forms.Padding(3);
+            tabPagePhase2.Size = new System.Drawing.Size(1563, 262);
+            tabPagePhase2.TabIndex = 2;
+            tabPagePhase2.Text = "Phase 2 (Full RAR)";
+            tabPagePhase2.UseVisualStyleBackColor = true;
+            //
+            // rtbLogSystem
+            //
+            rtbLogSystem.Dock = System.Windows.Forms.DockStyle.Fill;
+            rtbLogSystem.Font = new System.Drawing.Font("Consolas", 9F);
+            rtbLogSystem.Location = new System.Drawing.Point(3, 3);
+            rtbLogSystem.Name = "rtbLogSystem";
+            rtbLogSystem.ReadOnly = true;
+            rtbLogSystem.ScrollBars = System.Windows.Forms.RichTextBoxScrollBars.Both;
+            rtbLogSystem.Size = new System.Drawing.Size(1557, 256);
+            rtbLogSystem.TabIndex = 0;
+            rtbLogSystem.WordWrap = false;
+            //
+            // rtbLogPhase1
+            //
+            rtbLogPhase1.Dock = System.Windows.Forms.DockStyle.Fill;
+            rtbLogPhase1.Font = new System.Drawing.Font("Consolas", 9F);
+            rtbLogPhase1.Location = new System.Drawing.Point(3, 3);
+            rtbLogPhase1.Name = "rtbLogPhase1";
+            rtbLogPhase1.ReadOnly = true;
+            rtbLogPhase1.ScrollBars = System.Windows.Forms.RichTextBoxScrollBars.Both;
+            rtbLogPhase1.Size = new System.Drawing.Size(1557, 256);
+            rtbLogPhase1.TabIndex = 0;
+            rtbLogPhase1.WordWrap = false;
+            //
+            // rtbLogPhase2
+            //
+            rtbLogPhase2.Dock = System.Windows.Forms.DockStyle.Fill;
+            rtbLogPhase2.Font = new System.Drawing.Font("Consolas", 9F);
+            rtbLogPhase2.Location = new System.Drawing.Point(3, 3);
+            rtbLogPhase2.Name = "rtbLogPhase2";
+            rtbLogPhase2.ReadOnly = true;
+            rtbLogPhase2.ScrollBars = System.Windows.Forms.RichTextBoxScrollBars.Both;
+            rtbLogPhase2.Size = new System.Drawing.Size(1557, 256);
+            rtbLogPhase2.TabIndex = 0;
+            rtbLogPhase2.WordWrap = false;
             // 
             // gbInput
             // 
@@ -298,7 +380,7 @@ namespace WinRARRed.Forms
             // 
             // menuStrip1
             // 
-            menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiFile, tsmiView, tsmiSettings });
+            menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiFile, tsmiView, tsmiTools, tsmiSettings });
             menuStrip1.Location = new System.Drawing.Point(0, 0);
             menuStrip1.Name = "menuStrip1";
             menuStrip1.Size = new System.Drawing.Size(1596, 24);
@@ -337,13 +419,36 @@ namespace WinRARRed.Forms
             tsmiSettings.Name = "tsmiSettings";
             tsmiSettings.Size = new System.Drawing.Size(61, 20);
             tsmiSettings.Text = "&Settings";
-            // 
+            //
             // tsmiSettingsOptions
-            // 
+            //
             tsmiSettingsOptions.Name = "tsmiSettingsOptions";
             tsmiSettingsOptions.Size = new System.Drawing.Size(116, 22);
             tsmiSettingsOptions.Text = "&Options";
-            // 
+            //
+            // tsmiTools
+            //
+            tsmiTools.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiToolsFileInspector, tsmiToolsFileCompare });
+            tsmiTools.Name = "tsmiTools";
+            tsmiTools.Size = new System.Drawing.Size(46, 20);
+            tsmiTools.Text = "&Tools";
+            //
+            // tsmiToolsFileInspector
+            //
+            tsmiToolsFileInspector.Name = "tsmiToolsFileInspector";
+            tsmiToolsFileInspector.ShortcutKeys = System.Windows.Forms.Keys.F12;
+            tsmiToolsFileInspector.Size = new System.Drawing.Size(200, 22);
+            tsmiToolsFileInspector.Text = "File &Inspector...";
+            tsmiToolsFileInspector.Click += tsmiToolsFileInspector_Click;
+            //
+            // tsmiToolsFileCompare
+            //
+            tsmiToolsFileCompare.Name = "tsmiToolsFileCompare";
+            tsmiToolsFileCompare.ShortcutKeys = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.D;
+            tsmiToolsFileCompare.Size = new System.Drawing.Size(200, 22);
+            tsmiToolsFileCompare.Text = "File &Compare...";
+            tsmiToolsFileCompare.Click += tsmiToolsFileCompare_Click;
+            //
             // opStatus2
             // 
             opStatus2.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
@@ -407,8 +512,11 @@ namespace WinRARRed.Forms
             groupBox2.PerformLayout();
             groupBox3.ResumeLayout(false);
             groupBox3.PerformLayout();
+            tabPagePhase2.ResumeLayout(false);
+            tabPagePhase1.ResumeLayout(false);
+            tabPageSystem.ResumeLayout(false);
+            tabControlLogs.ResumeLayout(false);
             groupBox11.ResumeLayout(false);
-            groupBox11.PerformLayout();
             gbInput.ResumeLayout(false);
             groupBox12.ResumeLayout(false);
             groupBox12.PerformLayout();
@@ -436,7 +544,13 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.TextBox tbOutputDirectory;
         private System.Windows.Forms.Label label4;
         private System.Windows.Forms.GroupBox groupBox11;
-        private System.Windows.Forms.TextBox tbLog;
+        private System.Windows.Forms.TabControl tabControlLogs;
+        private System.Windows.Forms.TabPage tabPageSystem;
+        private System.Windows.Forms.TabPage tabPagePhase1;
+        private System.Windows.Forms.TabPage tabPagePhase2;
+        private System.Windows.Forms.RichTextBox rtbLogSystem;
+        private System.Windows.Forms.RichTextBox rtbLogPhase1;
+        private System.Windows.Forms.RichTextBox rtbLogPhase2;
         private System.Windows.Forms.GroupBox gbInput;
         private System.Windows.Forms.GroupBox groupBox12;
         private System.Windows.Forms.Label label19;
@@ -451,8 +565,10 @@ namespace WinRARRed.Forms
         private Controls.OperationProgressStatusUserControl opStatus1;
         private System.Windows.Forms.ToolStripMenuItem tsmiView;
         private System.Windows.Forms.ToolStripMenuItem tsmiViewCommandLines;
+        private System.Windows.Forms.ToolStripMenuItem tsmiTools;
+        private System.Windows.Forms.ToolStripMenuItem tsmiToolsFileInspector;
+        private System.Windows.Forms.ToolStripMenuItem tsmiToolsFileCompare;
         private System.Windows.Forms.Button btnClearLog;
-        private System.Windows.Forms.CheckBox cbAutoScroll;
-    }
+    private System.Windows.Forms.CheckBox cbAutoScroll;
 }
 

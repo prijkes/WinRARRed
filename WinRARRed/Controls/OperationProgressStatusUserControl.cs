@@ -3,10 +3,10 @@ using System.Text;
 using System.Windows.Forms;
 using WinRARRed.IO;
 
-namespace WinRARRed.Controls
+namespace WinRARRed.Controls;
+
+public partial class OperationProgressStatusUserControl : UserControl
 {
-    public partial class OperationProgressStatusUserControl : UserControl
-    {
         private string title = "Title";
 
         public string Title
@@ -103,6 +103,5 @@ namespace WinRARRed.Controls
             lblStatusOperationProgress.Text = "-";
 
             tbStatus.Clear();
-        }
     }
 }

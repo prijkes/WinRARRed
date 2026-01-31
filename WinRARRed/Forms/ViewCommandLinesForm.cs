@@ -7,10 +7,10 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using WinRARRed.Diagnostics;
 
-namespace WinRARRed.Forms
+namespace WinRARRed.Forms;
+
+public partial class ViewCommandLinesForm : Form
 {
-    public partial class ViewCommandLinesForm : Form
-    {
         public ViewCommandLinesForm(BruteForceOptions options)
         {
             InitializeComponent();
@@ -80,6 +80,5 @@ namespace WinRARRed.Forms
                 sb.AppendLine(args);
             }
             tbCommandLines.Text = sb.ToString();
-        }
     }
 }

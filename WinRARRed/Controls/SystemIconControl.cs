@@ -2,10 +2,10 @@
 using System.Media;
 using System.Windows.Forms;
 
-namespace WinRARRed.Controls
+namespace WinRARRed.Controls;
+
+public abstract class SystemIconControl : Control
 {
-    public abstract class SystemIconControl : Control
-    {
         private Icon Icon { get; set; }
 
         public SystemIconControl(Icon icon, SystemSound? sound = null)
@@ -24,6 +24,5 @@ namespace WinRARRed.Controls
 
             Rectangle rect = new(0, 0, Width, Height);
             e.Graphics.DrawIcon(Icon, rect);
-        }
     }
 }

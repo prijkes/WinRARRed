@@ -1,16 +1,15 @@
 ﻿using System;
 
-namespace WinRARRed.IO
+namespace WinRARRed.IO;
+
+public class FileCompressionOperationProgressEventArgs(long operationSize, long operationProgressed, DateTime startDateTime, string filePath) : OperationProgressEventArgs(operationSize, operationProgressed, startDateTime)
 {
-    public class FileCompressionOperationProgressEventArgs(long operationSize, long operationProgressed, DateTime startDateTime, string filePath) : OperationProgressEventArgs(operationSize, operationProgressed, startDateTime)
+    public string FilePath { get; } = filePath;
+
+    public bool Cancelled { get; private set; }
+
+    public void Cancel()
     {
-        public string FilePath { get; } = filePath;
-
-        public bool Cancelled { get; private set; }
-
-        public void Cancel()
-        {
-            Cancelled = true;
-        }
+        Cancelled = true;
     }
 }

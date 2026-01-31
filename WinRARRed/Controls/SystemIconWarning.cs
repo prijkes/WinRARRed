@@ -1,12 +1,11 @@
 ﻿using System.Drawing;
 using System.Media;
 
-namespace WinRARRed.Controls
+namespace WinRARRed.Controls;
+
+public partial class SystemIconWarning : SystemIconControl
 {
-    public partial class SystemIconWarning : SystemIconControl
+    public SystemIconWarning() : base(SystemIcons.Warning, SystemSounds.Exclamation)
     {
-        public SystemIconWarning() : base(SystemIcons.Warning, SystemSounds.Exclamation)
-        {
-        }
     }
 }

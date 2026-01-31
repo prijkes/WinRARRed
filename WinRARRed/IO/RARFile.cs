@@ -1,4 +1,4 @@
-﻿using SharpCompress.Archives;
+using SharpCompress.Archives;
 using SharpCompress.Archives.Rar;
 using SharpCompress.Common;
 using System;
@@ -7,75 +7,69 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace WinRARRed.IO
+namespace WinRARRed.IO;
+
+public class RARFile(string filePath)
 {
-    public class RARFile(string filePath)
+    public string FilePath { get; private set; } = filePath;
+
+    public event EventHandler<OperationProgressEventArgs>? ExtractionProgress;
+
+    private long _totalSize;
+    private long _bytesRead;
+    private DateTime _startTime;
+
+    public Task ExtractAsync(string outputDirectory, CancellationToken cancellationToken = default)
     {
-        public string FilePath { get; private set; } = filePath;
+        return Task.Run(() => ExtractFile(FilePath, outputDirectory, cancellationToken), cancellationToken);
+    }
 
-        public event EventHandler<OperationProgressEventArgs>? ExtractionProgress;
-
-        public Task ExtractAsync(string outputDirectory, CancellationToken cancellationToken = default)
+    private void ExtractFile(string filePath, string outputDirectory, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(filePath))
         {
-            return Task.Run(() => ExtractFile(FilePath, outputDirectory, cancellationToken), cancellationToken);
+            throw new FileNotFoundException(filePath);
         }
 
-        private void ExtractFile(string filePath, string outputDirectory, CancellationToken cancellationToken = default)
+        _startTime = DateTime.Now;
+        _bytesRead = 0;
+
+        using FileStream fileStream = File.OpenRead(FilePath);
+        _totalSize = fileStream.Length;
+
+        using RarArchive archive = RarArchive.Open(fileStream, new()
         {
-            if (!File.Exists(filePath))
+            LookForHeader = true
+        });
+
+        archive.CompressedBytesRead += Archive_CompressedBytesRead;
+
+        foreach (RarArchiveEntry entry in archive.Entries.Where(e => !e.IsDirectory))
+        {
+            if (cancellationToken.IsCancellationRequested)
             {
-                throw new FileNotFoundException(filePath);
+                break;
             }
 
-            using FileStream fileStream = File.OpenRead(FilePath);
-            using RarArchive archive = RarArchive.Open(fileStream, new()
+            entry.WriteToDirectory(outputDirectory, new()
             {
-                LookForHeader = true
+                ExtractFullPath = true,
+                Overwrite = false
             });
-
-            archive.CompressedBytesRead += Archive_CompressedBytesRead;
-            archive.EntryExtractionBegin += Archive_EntryExtractionBegin;
-            archive.EntryExtractionEnd += Archive_EntryExtractionEnd;
-            archive.FilePartExtractionBegin += Archive_FilePartExtractionBegin;
-
-            foreach (RarArchiveEntry entry in archive.Entries.Where(e => !e.IsDirectory))
-            {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                entry.WriteToDirectory(outputDirectory, new()
-                {
-                    ExtractFullPath = true,
-                    Overwrite = false
-                });
-            }
         }
+    }
 
-        private void Archive_CompressedBytesRead(object? sender, CompressedBytesReadEventArgs e)
-        {
-        }
+    private void Archive_CompressedBytesRead(object? sender, CompressedBytesReadEventArgs e)
+    {
+        _bytesRead += e.CompressedBytesRead;
 
-        private void Archive_EntryExtractionEnd(object? sender, ArchiveExtractionEventArgs<IArchiveEntry> e)
+        if (_totalSize > 0 && ExtractionProgress != null)
         {
-        }
-
-        private void Archive_EntryExtractionBegin(object? sender, ArchiveExtractionEventArgs<IArchiveEntry> e)
-        {
-        }
-
-        private void Archive_FilePartExtractionBegin(object? sender, FilePartExtractionBeginEventArgs e)
-        {
-            if (sender is not RarArchive archive)
-            {
-                return;
-            }
-        }
-
-        private void FireExtractionProgress(OperationProgressEventArgs e)
-        {
-            ExtractionProgress?.Invoke(this, e);
+            var progressArgs = new OperationProgressEventArgs(
+                _totalSize,
+                Math.Min(_bytesRead, _totalSize),
+                _startTime);
+            ExtractionProgress.Invoke(this, progressArgs);
         }
     }
 }

@@ -1,17 +1,16 @@
-﻿namespace WinRARRed.Diagnostics
+﻿namespace WinRARRed.Diagnostics;
+
+public class RARProcessDataEventArgs : ProcessDataEventArgs
 {
-    public class RARProcessDataEventArgs : ProcessDataEventArgs
+    public RARProcess Process { get; private set; }
+
+    public RARProcessDataEventArgs(RARProcess process, string? data) : base(data)
     {
-        public RARProcess Process { get; private set; }
+        Process = process;
+    }
 
-        public RARProcessDataEventArgs(RARProcess process, string? data) : base(data)
-        {
-            Process = process;
-        }
-
-        public RARProcessDataEventArgs(RARProcess process, string? data, bool error) : base(data, error)
-        {
-            Process = process;
-        }
+    public RARProcessDataEventArgs(RARProcess process, string? data, bool error) : base(data, error)
+    {
+        Process = process;
     }
 }

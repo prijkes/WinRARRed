@@ -1,9 +1,9 @@
 ﻿using System.Windows.Forms;
 
-namespace WinRARRed.Forms
+namespace WinRARRed.Forms;
+
+public partial class RARChecksumNotFoundForm : Form
 {
-    public partial class RARChecksumNotFoundForm : Form
-    {
         public RARChecksumNotFoundForm()
         {
             InitializeComponent();
@@ -14,6 +14,5 @@ namespace WinRARRed.Forms
         private void BtnOK_Click(object? sender, System.EventArgs e)
         {
             DialogResult = DialogResult.OK;
-        }
     }
 }

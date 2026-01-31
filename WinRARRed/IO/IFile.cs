@@ -1,7 +1,12 @@
-﻿namespace WinRARRed.IO
+﻿namespace WinRARRed.IO;
+
+/// <summary>
+/// Represents a file with a file path.
+/// </summary>
+public interface IFile
 {
-    public interface IFile
-    {
-        public string FilePath { get; }
-    }
+    /// <summary>
+    /// Gets the full path to the file.
+    /// </summary>
+    public string FilePath { get; }
 }

@@ -1,319 +1,307 @@
-namespace RARLib.Decompression
+namespace RARLib.Decompression;
+
+/// <summary>
+/// RAR 2.0 decompressor.
+/// Ported from unrar unpack20.cpp - LZ compression only (no audio mode for comments).
+/// </summary>
+public class Unpack20
 {
+    // Distance decode tables for RAR 2.0 (48 entries) - unique to RAR 2.0
+    private static readonly int[] DDecode =
+    [
+        0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192,
+        256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288,
+        16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144, 327680,
+        393216, 458752, 524288, 589824, 655360, 720896, 786432, 851968, 917504, 983040
+    ];
+
+    private static readonly byte[] DBits =
+    [
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+        7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14,
+        15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16
+    ];
+
+    private readonly BitInput _inp;
+    private readonly DecodeTable _tableLD = new();  // Literal/Length
+    private readonly DecodeTable _tableDD = new();  // Distance
+    private readonly DecodeTable _tableRD = new();  // Repeat
+    private readonly DecodeTable _tableBD = new();  // Bit length
+
+    private readonly byte[] _unpOldTable = new byte[PackDef.NC20 + PackDef.DC20 + PackDef.RC20];
+
+    private byte[] _window = null!;
+    private int _winSize;
+    private int _winMask;
+    private int _unpPtr;
+
+    private int _lastDist;
+    private int _lastLength;
+    private readonly int[] _oldDist = new int[4];
+    private int _oldDistPtr;
+
     /// <summary>
-    /// RAR 2.0 decompressor.
-    /// Ported from unrar unpack20.cpp - LZ compression only (no audio mode for comments).
+    /// Creates a new RAR 2.0 unpacker.
     /// </summary>
-    public class Unpack20
+    public Unpack20()
     {
-        // RAR 2.0 constants from compress.hpp
-        private const int NC20 = 298;  // Literal/length alphabet size
-        private const int DC20 = 48;   // Distance alphabet size
-        private const int RC20 = 28;   // Repeat alphabet size
-        private const int BC20 = 19;   // Bit length alphabet size
+        _inp = new BitInput();
+    }
 
-        // Length decode tables (same as RAR 2.9)
-        private static readonly byte[] LDecode = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224];
-        private static readonly byte[] LBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5];
+    /// <summary>
+    /// Decompresses RAR 2.0 compressed data.
+    /// </summary>
+    /// <param name="srcData">Compressed data</param>
+    /// <param name="destSize">Expected decompressed size</param>
+    /// <returns>Decompressed data, or null on failure</returns>
+    public byte[]? Decompress(byte[] srcData, int destSize)
+    {
+        if (srcData == null || srcData.Length == 0 || destSize <= 0)
+            return null;
 
-        // Distance decode tables for RAR 2.0 (48 entries)
-        private static readonly int[] DDecode = [
-            0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192,
-            256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288,
-            16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144, 327680,
-            393216, 458752, 524288, 589824, 655360, 720896, 786432, 851968, 917504, 983040
-        ];
-        private static readonly byte[] DBits = [
-            0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
-            7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14,
-            15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16
-        ];
+        // Initialize window (64KB for comments)
+        _winSize = 0x10000; // 64KB
+        _winMask = _winSize - 1;
+        _window = new byte[_winSize];
+        _unpPtr = 0;
 
-        // Short distance decode tables
-        private static readonly byte[] SDDecode = [0, 4, 8, 16, 32, 64, 128, 192];
-        private static readonly byte[] SDBits = [2, 2, 3, 4, 5, 6, 6, 6];
+        // Initialize state
+        Array.Clear(_oldDist);
+        _oldDistPtr = 0;
+        _lastDist = 0;
+        _lastLength = 0;
+        Array.Clear(_unpOldTable);
 
-        private readonly BitInput _inp;
-        private readonly DecodeTable _tableLD = new();  // Literal/Length
-        private readonly DecodeTable _tableDD = new();  // Distance
-        private readonly DecodeTable _tableRD = new();  // Repeat
-        private readonly DecodeTable _tableBD = new();  // Bit length
+        // Set up input buffer
+        _inp.SetBuffer(srcData);
 
-        private readonly byte[] _unpOldTable = new byte[NC20 + DC20 + RC20];
+        // Read Huffman tables
+        if (!ReadTables20())
+            return null;
 
-        private byte[] _window = null!;
-        private int _winSize;
-        private int _winMask;
-        private int _unpPtr;
+        // Decompress
+        byte[] result = new byte[destSize];
+        int destPtr = 0;
 
-        private int _lastDist;
-        private int _lastLength;
-        private readonly int[] _oldDist = new int[4];
-        private int _oldDistPtr;
-
-        /// <summary>
-        /// Creates a new RAR 2.0 unpacker.
-        /// </summary>
-        public Unpack20()
+        while (destPtr < destSize)
         {
-            _inp = new BitInput();
-        }
+            if (_inp.InAddr >= srcData.Length)
+                break;
 
-        /// <summary>
-        /// Decompresses RAR 2.0 compressed data.
-        /// </summary>
-        /// <param name="srcData">Compressed data</param>
-        /// <param name="destSize">Expected decompressed size</param>
-        /// <returns>Decompressed data, or null on failure</returns>
-        public byte[]? Decompress(byte[] srcData, int destSize)
-        {
-            if (srcData == null || srcData.Length == 0 || destSize <= 0)
-                return null;
+            uint number = HuffmanDecoder.DecodeNumber(_inp, _tableLD);
 
-            // Initialize window (64KB for comments)
-            _winSize = 0x10000; // 64KB
-            _winMask = _winSize - 1;
-            _window = new byte[_winSize];
-            _unpPtr = 0;
-
-            // Initialize state
-            Array.Clear(_oldDist);
-            _oldDistPtr = 0;
-            _lastDist = 0;
-            _lastLength = 0;
-            Array.Clear(_unpOldTable);
-
-            // Set up input buffer
-            _inp.SetBuffer(srcData);
-
-            // Read Huffman tables
-            if (!ReadTables20())
-                return null;
-
-            // Decompress
-            byte[] result = new byte[destSize];
-            int destPtr = 0;
-
-            while (destPtr < destSize)
+            if (number < 256)
             {
-                if (_inp.InAddr >= srcData.Length)
-                    break;
+                // Literal byte
+                _window[_unpPtr++] = (byte)number;
+                _unpPtr &= _winMask;
+                result[destPtr++] = (byte)number;
+                continue;
+            }
 
-                uint number = HuffmanDecoder.DecodeNumber(_inp, _tableLD);
-
-                if (number < 256)
+            if (number > 269)
+            {
+                // Length-distance pair
+                int length = PackDef.LDecode[number - 270] + 3;
+                int bits = PackDef.LBits[number - 270];
+                if (bits > 0)
                 {
-                    // Literal byte
-                    _window[_unpPtr++] = (byte)number;
-                    _unpPtr &= _winMask;
-                    result[destPtr++] = (byte)number;
-                    continue;
+                    length += (int)(_inp.GetBits() >> (16 - bits));
+                    _inp.AddBits(bits);
                 }
 
-                if (number > 269)
+                uint distNumber = HuffmanDecoder.DecodeNumber(_inp, _tableDD);
+                int distance = DDecode[distNumber] + 1;
+                bits = DBits[distNumber];
+                if (bits > 0)
                 {
-                    // Length-distance pair
-                    int length = LDecode[number - 270] + 3;
-                    int bits = LBits[number - 270];
-                    if (bits > 0)
-                    {
-                        length += (int)(_inp.GetBits() >> (16 - bits));
-                        _inp.AddBits(bits);
-                    }
+                    distance += (int)(_inp.GetBits() >> (16 - bits));
+                    _inp.AddBits(bits);
+                }
 
-                    uint distNumber = HuffmanDecoder.DecodeNumber(_inp, _tableDD);
-                    int distance = DDecode[distNumber] + 1;
-                    bits = DBits[distNumber];
-                    if (bits > 0)
-                    {
-                        distance += (int)(_inp.GetBits() >> (16 - bits));
-                        _inp.AddBits(bits);
-                    }
+                // Length adjustment for long distances
+                if (distance >= 0x2000)
+                {
+                    length++;
+                    if (distance >= 0x40000)
+                        length++;
+                }
 
-                    // Length adjustment for long distances
+                destPtr = CopyString20(result, destPtr, destSize, length, distance);
+                continue;
+            }
+
+            if (number == 269)
+            {
+                // Read new tables
+                if (!ReadTables20())
+                    break;
+                continue;
+            }
+
+            if (number == 256)
+            {
+                // Repeat last length/distance
+                destPtr = CopyString20(result, destPtr, destSize, _lastLength, _lastDist);
+                continue;
+            }
+
+            if (number < 261)
+            {
+                // Use old distance
+                int distance = _oldDist[(_oldDistPtr - (int)(number - 256)) & 3];
+                uint lengthNumber = HuffmanDecoder.DecodeNumber(_inp, _tableRD);
+                int length = PackDef.LDecode[lengthNumber] + 2;
+                int bits = PackDef.LBits[lengthNumber];
+                if (bits > 0)
+                {
+                    length += (int)(_inp.GetBits() >> (16 - bits));
+                    _inp.AddBits(bits);
+                }
+
+                // Length adjustment for distances
+                if (distance >= 0x101)
+                {
+                    length++;
                     if (distance >= 0x2000)
                     {
                         length++;
                         if (distance >= 0x40000)
                             length++;
                     }
-
-                    destPtr = CopyString20(result, destPtr, destSize, length, distance);
-                    continue;
                 }
 
-                if (number == 269)
-                {
-                    // Read new tables
-                    if (!ReadTables20())
-                        break;
-                    continue;
-                }
-
-                if (number == 256)
-                {
-                    // Repeat last length/distance
-                    destPtr = CopyString20(result, destPtr, destSize, _lastLength, _lastDist);
-                    continue;
-                }
-
-                if (number < 261)
-                {
-                    // Use old distance
-                    int distance = _oldDist[(_oldDistPtr - (int)(number - 256)) & 3];
-                    uint lengthNumber = HuffmanDecoder.DecodeNumber(_inp, _tableRD);
-                    int length = LDecode[lengthNumber] + 2;
-                    int bits = LBits[lengthNumber];
-                    if (bits > 0)
-                    {
-                        length += (int)(_inp.GetBits() >> (16 - bits));
-                        _inp.AddBits(bits);
-                    }
-
-                    // Length adjustment for distances
-                    if (distance >= 0x101)
-                    {
-                        length++;
-                        if (distance >= 0x2000)
-                        {
-                            length++;
-                            if (distance >= 0x40000)
-                                length++;
-                        }
-                    }
-
-                    destPtr = CopyString20(result, destPtr, destSize, length, distance);
-                    continue;
-                }
-
-                if (number < 270)
-                {
-                    // Short distance
-                    int distance = SDDecode[number - 261] + 1;
-                    int bits = SDBits[number - 261];
-                    if (bits > 0)
-                    {
-                        distance += (int)(_inp.GetBits() >> (16 - bits));
-                        _inp.AddBits(bits);
-                    }
-
-                    destPtr = CopyString20(result, destPtr, destSize, 2, distance);
-                    continue;
-                }
+                destPtr = CopyString20(result, destPtr, destSize, length, distance);
+                continue;
             }
 
-            return result;
+            if (number < 270)
+            {
+                // Short distance
+                int distance = PackDef.SDDecode[number - 261] + 1;
+                int bits = PackDef.SDBits[number - 261];
+                if (bits > 0)
+                {
+                    distance += (int)(_inp.GetBits() >> (16 - bits));
+                    _inp.AddBits(bits);
+                }
+
+                destPtr = CopyString20(result, destPtr, destSize, 2, distance);
+                continue;
+            }
         }
 
-        private int CopyString20(byte[] result, int destPtr, int destSize, int length, int distance)
+        return result;
+    }
+
+    private int CopyString20(byte[] result, int destPtr, int destSize, int length, int distance)
+    {
+        _lastDist = distance;
+        _oldDist[_oldDistPtr++] = distance;
+        _oldDistPtr &= 3;
+        _lastLength = length;
+
+        // Copy from window
+        int srcPos = (_unpPtr - distance) & _winMask;
+        while (length-- > 0 && destPtr < destSize)
         {
-            _lastDist = distance;
-            _oldDist[_oldDistPtr++] = distance;
-            _oldDistPtr &= 3;
-            _lastLength = length;
-
-            // Copy from window
-            int srcPos = (_unpPtr - distance) & _winMask;
-            while (length-- > 0 && destPtr < destSize)
-            {
-                byte b = _window[srcPos++];
-                srcPos &= _winMask;
-                _window[_unpPtr++] = b;
-                _unpPtr &= _winMask;
-                result[destPtr++] = b;
-            }
-
-            return destPtr;
+            byte b = _window[srcPos++];
+            srcPos &= _winMask;
+            _window[_unpPtr++] = b;
+            _unpPtr &= _winMask;
+            result[destPtr++] = b;
         }
 
-        private bool ReadTables20()
+        return destPtr;
+    }
+
+    private bool ReadTables20()
+    {
+        // Align to byte boundary
+        _inp.AddBits((8 - _inp.InBit) & 7);
+
+        uint bitField = _inp.GetBits();
+
+        // Check for audio block (bit 15) - we skip audio mode for comments
+        bool audioBlock = (bitField & 0x8000) != 0;
+        if (audioBlock)
         {
-            // Align to byte boundary
-            _inp.AddBits((8 - _inp.InBit) & 7);
+            // Audio mode not supported for comments
+            return false;
+        }
 
-            uint bitField = _inp.GetBits();
+        // Check if we should reset old table (bit 14)
+        if ((bitField & 0x4000) == 0)
+            Array.Clear(_unpOldTable);
 
-            // Check for audio block (bit 15) - we skip audio mode for comments
-            bool audioBlock = (bitField & 0x8000) != 0;
-            if (audioBlock)
+        _inp.AddBits(2);
+
+        int tableSize = PackDef.NC20 + PackDef.DC20 + PackDef.RC20;
+
+        // Read bit lengths for the bit length alphabet
+        byte[] bitLength = new byte[PackDef.BC20];
+        for (int i = 0; i < PackDef.BC20; i++)
+        {
+            bitLength[i] = (byte)(_inp.GetBits() >> 12);
+            _inp.AddBits(4);
+        }
+
+        HuffmanDecoder.MakeDecodeTables(bitLength, _tableBD, PackDef.BC20);
+
+        // Read the main table
+        byte[] table = new byte[tableSize];
+        for (int i = 0; i < tableSize;)
+        {
+            uint number = HuffmanDecoder.DecodeNumber(_inp, _tableBD);
+
+            if (number < 16)
             {
-                // Audio mode not supported for comments
-                return false;
+                table[i] = (byte)((number + _unpOldTable[i]) & 0xF);
+                i++;
             }
-
-            // Check if we should reset old table (bit 14)
-            if ((bitField & 0x4000) == 0)
-                Array.Clear(_unpOldTable);
-
-            _inp.AddBits(2);
-
-            int tableSize = NC20 + DC20 + RC20;
-
-            // Read bit lengths for the bit length alphabet
-            byte[] bitLength = new byte[BC20];
-            for (int i = 0; i < BC20; i++)
+            else if (number == 16)
             {
-                bitLength[i] = (byte)(_inp.GetBits() >> 12);
-                _inp.AddBits(4);
-            }
+                // Repeat previous
+                int n = (int)((_inp.GetBits() >> 14) + 3);
+                _inp.AddBits(2);
 
-            HuffmanDecoder.MakeDecodeTables(bitLength, _tableBD, BC20);
+                if (i == 0)
+                    return false; // Cannot repeat at first position
 
-            // Read the main table
-            byte[] table = new byte[tableSize];
-            for (int i = 0; i < tableSize;)
-            {
-                uint number = HuffmanDecoder.DecodeNumber(_inp, _tableBD);
-
-                if (number < 16)
+                while (n-- > 0 && i < tableSize)
                 {
-                    table[i] = (byte)((number + _unpOldTable[i]) & 0xF);
+                    table[i] = table[i - 1];
                     i++;
                 }
-                else if (number == 16)
-                {
-                    // Repeat previous
-                    int n = (int)((_inp.GetBits() >> 14) + 3);
-                    _inp.AddBits(2);
-
-                    if (i == 0)
-                        return false; // Cannot repeat at first position
-
-                    while (n-- > 0 && i < tableSize)
-                    {
-                        table[i] = table[i - 1];
-                        i++;
-                    }
-                }
-                else if (number == 17)
-                {
-                    // Zero run (short)
-                    int n = (int)((_inp.GetBits() >> 13) + 3);
-                    _inp.AddBits(3);
-
-                    while (n-- > 0 && i < tableSize)
-                        table[i++] = 0;
-                }
-                else
-                {
-                    // Zero run (long)
-                    int n = (int)((_inp.GetBits() >> 9) + 11);
-                    _inp.AddBits(7);
-
-                    while (n-- > 0 && i < tableSize)
-                        table[i++] = 0;
-                }
             }
+            else if (number == 17)
+            {
+                // Zero run (short)
+                int n = (int)((_inp.GetBits() >> 13) + 3);
+                _inp.AddBits(3);
 
-            // Build decode tables
-            HuffmanDecoder.MakeDecodeTables(table, _tableLD, NC20);
-            HuffmanDecoder.MakeDecodeTables(table.AsSpan(NC20).ToArray(), _tableDD, DC20);
-            HuffmanDecoder.MakeDecodeTables(table.AsSpan(NC20 + DC20).ToArray(), _tableRD, RC20);
+                while (n-- > 0 && i < tableSize)
+                    table[i++] = 0;
+            }
+            else
+            {
+                // Zero run (long)
+                int n = (int)((_inp.GetBits() >> 9) + 11);
+                _inp.AddBits(7);
 
-            // Save old table
-            Array.Copy(table, _unpOldTable, tableSize);
-
-            return true;
+                while (n-- > 0 && i < tableSize)
+                    table[i++] = 0;
+            }
         }
+
+        // Build decode tables
+        HuffmanDecoder.MakeDecodeTables(table, _tableLD, PackDef.NC20);
+        HuffmanDecoder.MakeDecodeTables(table.AsSpan(PackDef.NC20).ToArray(), _tableDD, PackDef.DC20);
+        HuffmanDecoder.MakeDecodeTables(table.AsSpan(PackDef.NC20 + PackDef.DC20).ToArray(), _tableRD, PackDef.RC20);
+
+        // Save old table
+        Array.Copy(table, _unpOldTable, tableSize);
+
+        return true;
     }
 }

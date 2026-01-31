@@ -1,8 +1,7 @@
-﻿
-namespace WinRARRed.Forms
+﻿namespace WinRARRed.Forms;
+
+partial class SettingsOptionsForm
 {
-    partial class SettingsOptionsForm
-    {
         /// <summary>
         /// Required designer variable.
         /// </summary>
@@ -75,6 +74,11 @@ namespace WinRARRed.Forms
             label18 = new System.Windows.Forms.Label();
             groupBox10 = new System.Windows.Forms.GroupBox();
             groupBox9 = new System.Windows.Forms.GroupBox();
+            tbSwitchSize = new System.Windows.Forms.TextBox();
+            rbSwitchSizeBytes = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeGiB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeMiB = new System.Windows.Forms.RadioButton();
+            rbSwitchSizeKiB = new System.Windows.Forms.RadioButton();
             rbSwitchSizeKB = new System.Windows.Forms.RadioButton();
             cbSwitchV = new System.Windows.Forms.CheckBox();
             rbSwitchSizeGB = new System.Windows.Forms.RadioButton();
@@ -111,15 +115,15 @@ namespace WinRARRed.Forms
             btnImportSrr = new System.Windows.Forms.Button();
             btnCancel = new System.Windows.Forms.Button();
             cbDeleteRARFiles = new System.Windows.Forms.CheckBox();
+            cbStopOnFirstMatch = new System.Windows.Forms.CheckBox();
             checkBox1 = new System.Windows.Forms.CheckBox();
             checkBox2 = new System.Windows.Forms.CheckBox();
             checkBox3 = new System.Windows.Forms.CheckBox();
             groupBox5 = new System.Windows.Forms.GroupBox();
-            rbSwitchSizeKiB = new System.Windows.Forms.RadioButton();
-            rbSwitchSizeMiB = new System.Windows.Forms.RadioButton();
-            rbSwitchSizeGiB = new System.Windows.Forms.RadioButton();
-            rbSwitchSizeBytes = new System.Windows.Forms.RadioButton();
-            tbSwitchSize = new System.Windows.Forms.TextBox();
+            gbHostOSOverride = new System.Windows.Forms.GroupBox();
+            lblHostOSDetected = new System.Windows.Forms.Label();
+            lblHostOSInfo = new System.Windows.Forms.Label();
+            cbEnableHostOSPatching = new System.Windows.Forms.CheckBox();
             gbFileOptions.SuspendLayout();
             gbRARVersion.SuspendLayout();
             gbSwitches.SuspendLayout();
@@ -136,6 +140,7 @@ namespace WinRARRed.Forms
             groupBox7.SuspendLayout();
             groupBox6.SuspendLayout();
             groupBox5.SuspendLayout();
+            gbHostOSOverride.SuspendLayout();
             SuspendLayout();
             // 
             // gbFileOptions
@@ -143,9 +148,9 @@ namespace WinRARRed.Forms
             gbFileOptions.Controls.Add(cbFileI);
             gbFileOptions.Controls.Add(label3);
             gbFileOptions.Controls.Add(cbFileA);
-            gbFileOptions.Location = new System.Drawing.Point(12, 142);
+            gbFileOptions.Location = new System.Drawing.Point(12, 158);
             gbFileOptions.Name = "gbFileOptions";
-            gbFileOptions.Size = new System.Drawing.Size(1131, 87);
+            gbFileOptions.Size = new System.Drawing.Size(479, 87);
             gbFileOptions.TabIndex = 34;
             gbFileOptions.TabStop = false;
             gbFileOptions.Text = "File options";
@@ -193,7 +198,7 @@ namespace WinRARRed.Forms
             gbRARVersion.Controls.Add(cbRARVersion2);
             gbRARVersion.Location = new System.Drawing.Point(12, 72);
             gbRARVersion.Name = "gbRARVersion";
-            gbRARVersion.Size = new System.Drawing.Size(676, 64);
+            gbRARVersion.Size = new System.Drawing.Size(479, 80);
             gbRARVersion.TabIndex = 33;
             gbRARVersion.TabStop = false;
             gbRARVersion.Text = "RAR version";
@@ -203,14 +208,14 @@ namespace WinRARRed.Forms
             label2.AutoSize = true;
             label2.Location = new System.Drawing.Point(6, 19);
             label2.Name = "label2";
-            label2.Size = new System.Drawing.Size(658, 15);
+            label2.Size = new System.Drawing.Size(390, 30);
             label2.TabIndex = 5;
-            label2.Text = "The RAR version to compress the release files with. Older releases will have been compressed with older versions of WinRAR.";
+            label2.Text = "The RAR version to compress the release files with.\r\nOlder releases will have been compressed with older versions of WinRAR.";
             // 
             // cbRARVersion6
             // 
             cbRARVersion6.AutoSize = true;
-            cbRARVersion6.Location = new System.Drawing.Point(258, 37);
+            cbRARVersion6.Location = new System.Drawing.Point(258, 52);
             cbRARVersion6.Name = "cbRARVersion6";
             cbRARVersion6.Size = new System.Drawing.Size(57, 19);
             cbRARVersion6.TabIndex = 4;
@@ -220,7 +225,7 @@ namespace WinRARRed.Forms
             // cbRARVersion5
             // 
             cbRARVersion5.AutoSize = true;
-            cbRARVersion5.Location = new System.Drawing.Point(195, 37);
+            cbRARVersion5.Location = new System.Drawing.Point(195, 52);
             cbRARVersion5.Name = "cbRARVersion5";
             cbRARVersion5.Size = new System.Drawing.Size(57, 19);
             cbRARVersion5.TabIndex = 3;
@@ -232,7 +237,7 @@ namespace WinRARRed.Forms
             cbRARVersion4.AutoSize = true;
             cbRARVersion4.Checked = true;
             cbRARVersion4.CheckState = System.Windows.Forms.CheckState.Checked;
-            cbRARVersion4.Location = new System.Drawing.Point(132, 37);
+            cbRARVersion4.Location = new System.Drawing.Point(132, 52);
             cbRARVersion4.Name = "cbRARVersion4";
             cbRARVersion4.Size = new System.Drawing.Size(57, 19);
             cbRARVersion4.TabIndex = 2;
@@ -242,7 +247,7 @@ namespace WinRARRed.Forms
             // cbRARVersion3
             // 
             cbRARVersion3.AutoSize = true;
-            cbRARVersion3.Location = new System.Drawing.Point(69, 37);
+            cbRARVersion3.Location = new System.Drawing.Point(69, 52);
             cbRARVersion3.Name = "cbRARVersion3";
             cbRARVersion3.Size = new System.Drawing.Size(57, 19);
             cbRARVersion3.TabIndex = 1;
@@ -252,7 +257,7 @@ namespace WinRARRed.Forms
             // cbRARVersion2
             // 
             cbRARVersion2.AutoSize = true;
-            cbRARVersion2.Location = new System.Drawing.Point(6, 37);
+            cbRARVersion2.Location = new System.Drawing.Point(6, 52);
             cbRARVersion2.Name = "cbRARVersion2";
             cbRARVersion2.Size = new System.Drawing.Size(57, 19);
             cbRARVersion2.TabIndex = 0;
@@ -272,7 +277,7 @@ namespace WinRARRed.Forms
             gbSwitches.Controls.Add(groupBox8);
             gbSwitches.Controls.Add(groupBox7);
             gbSwitches.Controls.Add(groupBox6);
-            gbSwitches.Location = new System.Drawing.Point(12, 235);
+            gbSwitches.Location = new System.Drawing.Point(12, 251);
             gbSwitches.Name = "gbSwitches";
             gbSwitches.Size = new System.Drawing.Size(1131, 562);
             gbSwitches.TabIndex = 32;
@@ -641,6 +646,58 @@ namespace WinRARRed.Forms
             groupBox9.TabStop = false;
             groupBox9.Text = "Split";
             // 
+            // tbSwitchSize
+            // 
+            tbSwitchSize.Location = new System.Drawing.Point(314, 20);
+            tbSwitchSize.Name = "tbSwitchSize";
+            tbSwitchSize.Size = new System.Drawing.Size(75, 23);
+            tbSwitchSize.TabIndex = 26;
+            tbSwitchSize.Text = "1";
+            // 
+            // rbSwitchSizeBytes
+            // 
+            rbSwitchSizeBytes.AutoSize = true;
+            rbSwitchSizeBytes.Enabled = false;
+            rbSwitchSizeBytes.Location = new System.Drawing.Point(395, 22);
+            rbSwitchSizeBytes.Name = "rbSwitchSizeBytes";
+            rbSwitchSizeBytes.Size = new System.Drawing.Size(53, 19);
+            rbSwitchSizeBytes.TabIndex = 25;
+            rbSwitchSizeBytes.Text = "bytes";
+            rbSwitchSizeBytes.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeGiB
+            // 
+            rbSwitchSizeGiB.AutoSize = true;
+            rbSwitchSizeGiB.Enabled = false;
+            rbSwitchSizeGiB.Location = new System.Drawing.Point(565, 72);
+            rbSwitchSizeGiB.Name = "rbSwitchSizeGiB";
+            rbSwitchSizeGiB.Size = new System.Drawing.Size(102, 19);
+            rbSwitchSizeGiB.TabIndex = 24;
+            rbSwitchSizeGiB.Text = "GiB - 1024 MiB";
+            rbSwitchSizeGiB.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeMiB
+            // 
+            rbSwitchSizeMiB.AutoSize = true;
+            rbSwitchSizeMiB.Enabled = false;
+            rbSwitchSizeMiB.Location = new System.Drawing.Point(565, 47);
+            rbSwitchSizeMiB.Name = "rbSwitchSizeMiB";
+            rbSwitchSizeMiB.Size = new System.Drawing.Size(101, 19);
+            rbSwitchSizeMiB.TabIndex = 23;
+            rbSwitchSizeMiB.Text = "MiB - 1024 KiB";
+            rbSwitchSizeMiB.UseVisualStyleBackColor = true;
+            // 
+            // rbSwitchSizeKiB
+            // 
+            rbSwitchSizeKiB.AutoSize = true;
+            rbSwitchSizeKiB.Enabled = false;
+            rbSwitchSizeKiB.Location = new System.Drawing.Point(565, 22);
+            rbSwitchSizeKiB.Name = "rbSwitchSizeKiB";
+            rbSwitchSizeKiB.Size = new System.Drawing.Size(108, 19);
+            rbSwitchSizeKiB.TabIndex = 22;
+            rbSwitchSizeKiB.Text = "KiB - 1024 bytes";
+            rbSwitchSizeKiB.UseVisualStyleBackColor = true;
+            // 
             // rbSwitchSizeKB
             // 
             rbSwitchSizeKB.AutoSize = true;
@@ -995,7 +1052,7 @@ namespace WinRARRed.Forms
             // 
             // btnSave
             // 
-            btnSave.Location = new System.Drawing.Point(1049, 803);
+            btnSave.Location = new System.Drawing.Point(1049, 819);
             btnSave.Name = "btnSave";
             btnSave.Size = new System.Drawing.Size(75, 23);
             btnSave.TabIndex = 35;
@@ -1004,7 +1061,7 @@ namespace WinRARRed.Forms
             // 
             // btnImportSrr
             // 
-            btnImportSrr.Location = new System.Drawing.Point(805, 803);
+            btnImportSrr.Location = new System.Drawing.Point(805, 819);
             btnImportSrr.Name = "btnImportSrr";
             btnImportSrr.Size = new System.Drawing.Size(120, 23);
             btnImportSrr.TabIndex = 44;
@@ -1013,7 +1070,7 @@ namespace WinRARRed.Forms
             // 
             // btnCancel
             // 
-            btnCancel.Location = new System.Drawing.Point(931, 803);
+            btnCancel.Location = new System.Drawing.Point(931, 819);
             btnCancel.Name = "btnCancel";
             btnCancel.Size = new System.Drawing.Size(75, 23);
             btnCancel.TabIndex = 36;
@@ -1025,12 +1082,24 @@ namespace WinRARRed.Forms
             cbDeleteRARFiles.AutoSize = true;
             cbDeleteRARFiles.Checked = true;
             cbDeleteRARFiles.CheckState = System.Windows.Forms.CheckState.Checked;
-            cbDeleteRARFiles.Location = new System.Drawing.Point(12, 803);
+            cbDeleteRARFiles.Location = new System.Drawing.Point(12, 819);
             cbDeleteRARFiles.Name = "cbDeleteRARFiles";
             cbDeleteRARFiles.Size = new System.Drawing.Size(261, 19);
             cbDeleteRARFiles.TabIndex = 26;
             cbDeleteRARFiles.Text = "Delete RAR files if checksum does not match";
             cbDeleteRARFiles.UseVisualStyleBackColor = true;
+            // 
+            // cbStopOnFirstMatch
+            // 
+            cbStopOnFirstMatch.AutoSize = true;
+            cbStopOnFirstMatch.Checked = true;
+            cbStopOnFirstMatch.CheckState = System.Windows.Forms.CheckState.Checked;
+            cbStopOnFirstMatch.Location = new System.Drawing.Point(290, 819);
+            cbStopOnFirstMatch.Name = "cbStopOnFirstMatch";
+            cbStopOnFirstMatch.Size = new System.Drawing.Size(127, 19);
+            cbStopOnFirstMatch.TabIndex = 46;
+            cbStopOnFirstMatch.Text = "Stop on first match";
+            cbStopOnFirstMatch.UseVisualStyleBackColor = true;
             // 
             // checkBox1
             // 
@@ -1081,64 +1150,53 @@ namespace WinRARRed.Forms
             groupBox5.TabStop = false;
             groupBox5.Text = "Checkbox legend";
             // 
-            // rbSwitchSizeKiB
+            // gbHostOSOverride
             // 
-            rbSwitchSizeKiB.AutoSize = true;
-            rbSwitchSizeKiB.Enabled = false;
-            rbSwitchSizeKiB.Location = new System.Drawing.Point(565, 22);
-            rbSwitchSizeKiB.Name = "rbSwitchSizeKiB";
-            rbSwitchSizeKiB.Size = new System.Drawing.Size(108, 19);
-            rbSwitchSizeKiB.TabIndex = 22;
-            rbSwitchSizeKiB.Text = "KiB - 1024 bytes";
-            rbSwitchSizeKiB.UseVisualStyleBackColor = true;
+            gbHostOSOverride.Controls.Add(lblHostOSDetected);
+            gbHostOSOverride.Controls.Add(lblHostOSInfo);
+            gbHostOSOverride.Controls.Add(cbEnableHostOSPatching);
+            gbHostOSOverride.Location = new System.Drawing.Point(497, 72);
+            gbHostOSOverride.Name = "gbHostOSOverride";
+            gbHostOSOverride.Size = new System.Drawing.Size(362, 64);
+            gbHostOSOverride.TabIndex = 45;
+            gbHostOSOverride.TabStop = false;
+            gbHostOSOverride.Text = "Host OS Patching (post-processing)";
             // 
-            // rbSwitchSizeMiB
+            // lblHostOSDetected
             // 
-            rbSwitchSizeMiB.AutoSize = true;
-            rbSwitchSizeMiB.Enabled = false;
-            rbSwitchSizeMiB.Location = new System.Drawing.Point(565, 47);
-            rbSwitchSizeMiB.Name = "rbSwitchSizeMiB";
-            rbSwitchSizeMiB.Size = new System.Drawing.Size(101, 19);
-            rbSwitchSizeMiB.TabIndex = 23;
-            rbSwitchSizeMiB.Text = "MiB - 1024 KiB";
-            rbSwitchSizeMiB.UseVisualStyleBackColor = true;
+            lblHostOSDetected.Location = new System.Drawing.Point(266, 41);
+            lblHostOSDetected.Name = "lblHostOSDetected";
+            lblHostOSDetected.Size = new System.Drawing.Size(87, 15);
+            lblHostOSDetected.TabIndex = 2;
             // 
-            // rbSwitchSizeGiB
+            // lblHostOSInfo
             // 
-            rbSwitchSizeGiB.AutoSize = true;
-            rbSwitchSizeGiB.Enabled = false;
-            rbSwitchSizeGiB.Location = new System.Drawing.Point(565, 72);
-            rbSwitchSizeGiB.Name = "rbSwitchSizeGiB";
-            rbSwitchSizeGiB.Size = new System.Drawing.Size(102, 19);
-            rbSwitchSizeGiB.TabIndex = 24;
-            rbSwitchSizeGiB.Text = "GiB - 1024 MiB";
-            rbSwitchSizeGiB.UseVisualStyleBackColor = true;
+            lblHostOSInfo.AutoSize = true;
+            lblHostOSInfo.ForeColor = System.Drawing.SystemColors.GrayText;
+            lblHostOSInfo.Location = new System.Drawing.Point(6, 41);
+            lblHostOSInfo.Name = "lblHostOSInfo";
+            lblHostOSInfo.Size = new System.Drawing.Size(254, 15);
+            lblHostOSInfo.TabIndex = 1;
+            lblHostOSInfo.Text = "Import an SRR to detect Host OS and attributes";
             // 
-            // rbSwitchSizeBytes
+            // cbEnableHostOSPatching
             // 
-            rbSwitchSizeBytes.AutoSize = true;
-            rbSwitchSizeBytes.Enabled = false;
-            rbSwitchSizeBytes.Location = new System.Drawing.Point(395, 22);
-            rbSwitchSizeBytes.Name = "rbSwitchSizeBytes";
-            rbSwitchSizeBytes.Size = new System.Drawing.Size(53, 19);
-            rbSwitchSizeBytes.TabIndex = 25;
-            rbSwitchSizeBytes.Text = "bytes";
-            rbSwitchSizeBytes.UseVisualStyleBackColor = true;
-            // 
-            // tbSwitchSize
-            // 
-            tbSwitchSize.Location = new System.Drawing.Point(314, 20);
-            tbSwitchSize.Name = "tbSwitchSize";
-            tbSwitchSize.Size = new System.Drawing.Size(75, 23);
-            tbSwitchSize.TabIndex = 26;
-            tbSwitchSize.Text = "1";
+            cbEnableHostOSPatching.AutoSize = true;
+            cbEnableHostOSPatching.Location = new System.Drawing.Point(6, 19);
+            cbEnableHostOSPatching.Name = "cbEnableHostOSPatching";
+            cbEnableHostOSPatching.Size = new System.Drawing.Size(347, 19);
+            cbEnableHostOSPatching.TabIndex = 0;
+            cbEnableHostOSPatching.Text = "Patch brute-forced RAR to match SRR Host OS and attributes";
+            cbEnableHostOSPatching.UseVisualStyleBackColor = true;
             // 
             // SettingsOptionsForm
             // 
             AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            ClientSize = new System.Drawing.Size(1154, 839);
+            ClientSize = new System.Drawing.Size(1154, 851);
+            Controls.Add(gbHostOSOverride);
             Controls.Add(groupBox5);
+            Controls.Add(cbStopOnFirstMatch);
             Controls.Add(cbDeleteRARFiles);
             Controls.Add(btnCancel);
             Controls.Add(btnImportSrr);
@@ -1181,6 +1239,8 @@ namespace WinRARRed.Forms
             groupBox6.PerformLayout();
             groupBox5.ResumeLayout(false);
             groupBox5.PerformLayout();
+            gbHostOSOverride.ResumeLayout(false);
+            gbHostOSOverride.PerformLayout();
             ResumeLayout(false);
             PerformLayout();
         }
@@ -1277,5 +1337,9 @@ namespace WinRARRed.Forms
         private System.Windows.Forms.RadioButton rbSwitchSizeMiB;
         private System.Windows.Forms.RadioButton rbSwitchSizeKiB;
         private System.Windows.Forms.TextBox tbSwitchSize;
-    }
+        private System.Windows.Forms.GroupBox gbHostOSOverride;
+        private System.Windows.Forms.CheckBox cbEnableHostOSPatching;
+        private System.Windows.Forms.Label lblHostOSInfo;
+        private System.Windows.Forms.Label lblHostOSDetected;
+    private System.Windows.Forms.CheckBox cbStopOnFirstMatch;
 }

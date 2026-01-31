@@ -1,9 +1,9 @@
 ﻿using System.Windows.Forms;
 
-namespace WinRARRed.Forms
+namespace WinRARRed.Forms;
+
+public partial class ModifiedDateWarningForm : Form
 {
-    public partial class ModifiedDateWarningForm : Form
-    {
         public ModifiedDateWarningForm()
         {
             InitializeComponent();
@@ -20,6 +20,5 @@ namespace WinRARRed.Forms
         private void BtnCancel_Click(object? sender, System.EventArgs e)
         {
             DialogResult = DialogResult.Cancel;
-        }
     }
 }

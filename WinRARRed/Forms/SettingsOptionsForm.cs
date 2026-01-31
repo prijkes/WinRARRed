@@ -3,13 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Windows.Forms;
+using RARLib;
+using SRRLib;
 using WinRARRed.Diagnostics;
-using WinRARRed.IO;
 
-namespace WinRARRed.Forms
+namespace WinRARRed.Forms;
+
+public partial class SettingsOptionsForm : Form
 {
-    public partial class SettingsOptionsForm : Form
-    {
         public RAROptions RAROptions { get; private set; }
         public event EventHandler<string>? VerificationFileExtracted;
         private HashSet<string> ImportedArchiveFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -22,6 +23,16 @@ namespace WinRARRed.Forms
         private Dictionary<string, DateTime> ImportedFileAccessTimes = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, string> ImportedArchiveFileCrcs = new(StringComparer.OrdinalIgnoreCase);
         private string? ImportedArchiveComment = null;
+        private byte[]? ImportedArchiveCommentBytes = null;
+        private byte[]? ImportedCmtCompressedData = null;
+        private byte? ImportedCmtCompressionMethod = null;
+
+        // Host OS patching - exact values from SRR
+        private byte? DetectedFileHostOS = null;
+        private uint? DetectedFileAttributes = null;
+        private byte? DetectedCmtHostOS = null;
+        private uint? DetectedCmtFileTime = null;
+        private uint? DetectedCmtFileAttributes = null;
 
         public SettingsOptionsForm()
         {
@@ -49,6 +60,7 @@ namespace WinRARRed.Forms
             gbFileOptions.Enabled = enabled;
             gbSwitches.Enabled = enabled;
             cbDeleteRARFiles.Enabled = enabled;
+            cbStopOnFirstMatch.Enabled = enabled;
             btnSave.Enabled = enabled;
         }
 
@@ -182,6 +194,7 @@ namespace WinRARRed.Forms
             cbSwitchTSA3.Checked = RAROptions.CommandLineArguments.Any(a => a.Any(ab => ab.Argument == "-tsa3"));
             cbSwitchTSA4.Checked = RAROptions.CommandLineArguments.Any(a => a.Any(ab => ab.Argument == "-tsa4"));
             cbDeleteRARFiles.Checked = RAROptions.DeleteRARFiles;
+            cbStopOnFirstMatch.Checked = RAROptions.StopOnFirstMatch;
         }
 
         private void CbFile_CheckedChanged(object? sender, EventArgs e)
@@ -235,8 +248,13 @@ namespace WinRARRed.Forms
 
             try
             {
+                Log.Information(this, $"=== SRR Import: {Path.GetFileName(ofd.FileName)} ===", LogTarget.System);
+                Log.Debug(this, $"Full path: {ofd.FileName}", LogTarget.System);
+
                 var srr = SRRFile.Load(ofd.FileName);
                 List<string> importedSettings = [];
+
+                Log.Information(this, $"SRR loaded successfully", LogTarget.System);
                 ImportedArchiveFiles = new HashSet<string>(srr.ArchivedFiles, StringComparer.OrdinalIgnoreCase);
                 ImportedArchiveDirectories = new HashSet<string>(srr.ArchivedDirectories, StringComparer.OrdinalIgnoreCase);
                 ImportedDirectoryTimestamps = new Dictionary<string, DateTime>(srr.ArchivedDirectoryTimestamps, StringComparer.OrdinalIgnoreCase);
@@ -250,10 +268,20 @@ namespace WinRARRed.Forms
                 {
                     string dirSuffix = ImportedArchiveDirectories.Count > 0 ? $", {ImportedArchiveDirectories.Count} dirs" : string.Empty;
                     importedSettings.Add($"Archive entries: {ImportedArchiveFiles.Count} files{dirSuffix}");
+                    Log.Information(this, $"Archived entries: {ImportedArchiveFiles.Count} files{dirSuffix}", LogTarget.System);
+                    foreach (string file in ImportedArchiveFiles.OrderBy(f => f))
+                    {
+                        Log.Debug(this, $"  File: {file}", LogTarget.System);
+                    }
+                    foreach (string dir in ImportedArchiveDirectories.OrderBy(d => d))
+                    {
+                        Log.Debug(this, $"  Dir: {dir}", LogTarget.System);
+                    }
                 }
                 else
                 {
                     importedSettings.Add("Archive entries: none (all files will be used)");
+                    Log.Information(this, "Archived entries: none (all files will be used)", LogTarget.System);
                 }
 
                 if (ImportedDirectoryTimestamps.Count > 0 || ImportedDirectoryCreationTimes.Count > 0 || ImportedDirectoryAccessTimes.Count > 0)
@@ -269,21 +297,127 @@ namespace WinRARRed.Forms
                 if (ImportedArchiveFileCrcs.Count > 0)
                 {
                     importedSettings.Add($"File CRC32 entries: {ImportedArchiveFileCrcs.Count}");
+                    Log.Information(this, $"Archived file CRCs: {ImportedArchiveFileCrcs.Count}", LogTarget.System);
                     // Log every CRC entry so users can verify all files were imported.
                     foreach (KeyValuePair<string, string> crcEntry in ImportedArchiveFileCrcs.OrderBy(entry => entry.Key))
                     {
-                        Log.Debug(this, $"[SRR] CRC entry: {crcEntry.Key} = {crcEntry.Value}");
+                        Log.Debug(this, $"  CRC: {crcEntry.Key} = {crcEntry.Value}", LogTarget.System);
                     }
                 }
 
                 // Store archive comment if present
                 ImportedArchiveComment = srr.ArchiveComment;
+                ImportedArchiveCommentBytes = srr.ArchiveCommentBytes;
+                ImportedCmtCompressedData = srr.CmtCompressedData;
+                ImportedCmtCompressionMethod = srr.CmtCompressionMethod;
                 if (!string.IsNullOrEmpty(ImportedArchiveComment))
                 {
                     int commentLen = ImportedArchiveComment.Length;
                     string truncated = commentLen > 50 ? ImportedArchiveComment[..50] + "..." : ImportedArchiveComment;
                     importedSettings.Add($"Archive comment: {commentLen} chars");
-                    Log.Information(this, $"[SRR] Archive comment ({commentLen} chars): {truncated.Replace("\r", "").Replace("\n", " ")}");
+                    Log.Information(this, $"Archive comment: {commentLen} chars", LogTarget.System);
+                    Log.Debug(this, $"  Preview: {truncated.Replace("\r", "").Replace("\n", " ")}", LogTarget.System);
+                }
+
+                // Log CMT compressed data availability for Phase 1
+                if (ImportedCmtCompressedData != null && ImportedCmtCompressedData.Length > 0)
+                {
+                    string methodName = ImportedCmtCompressionMethod switch
+                    {
+                        0x30 => "Store",
+                        0x31 => "Fastest",
+                        0x32 => "Fast",
+                        0x33 => "Normal",
+                        0x34 => "Good",
+                        0x35 => "Best",
+                        _ => $"0x{ImportedCmtCompressionMethod:X2}"
+                    };
+                    importedSettings.Add($"CMT block: {ImportedCmtCompressedData.Length} bytes ({methodName}) - Phase 1 enabled");
+                    Log.Information(this, $"CMT compressed data: {ImportedCmtCompressedData.Length} bytes, method={methodName}", LogTarget.System);
+                    Log.Information(this, "Phase 1 (comment brute-force) is enabled", LogTarget.System);
+                }
+                else
+                {
+                    Log.Information(this, "No CMT data - Phase 1 will be skipped", LogTarget.System);
+                }
+
+                // Store detected Host OS and attributes from SRR for patching
+                DetectedFileHostOS = srr.DetectedHostOS;
+                DetectedFileAttributes = srr.DetectedFileAttributes;
+                DetectedCmtHostOS = srr.CmtHostOS;
+                DetectedCmtFileTime = srr.CmtFileTimeDOS;
+                DetectedCmtFileAttributes = srr.CmtFileAttributes;
+
+                // Display detected Host OS from file headers
+                if (srr.DetectedHostOS.HasValue)
+                {
+                    importedSettings.Add($"Host OS (files): {srr.DetectedHostOSName} (0x{srr.DetectedHostOS:X2})");
+                    Log.Information(this, $"Detected Host OS: {srr.DetectedHostOSName} (0x{srr.DetectedHostOS:X2})", LogTarget.System);
+
+                    // Check if Host OS differs from current platform
+                    bool isCurrentWindows = Environment.OSVersion.Platform == PlatformID.Win32NT;
+                    bool isRarWindows = srr.DetectedHostOS == 2;
+                    bool isRarUnix = srr.DetectedHostOS == 3;
+                    bool needsPatching = (isCurrentWindows && isRarUnix) || (!isCurrentWindows && isRarWindows);
+
+                    if (needsPatching)
+                    {
+                        // Auto-enable patching since Host OS differs from current platform
+                        cbEnableHostOSPatching.Checked = true;
+                        string targetOS = isRarUnix ? "Unix" : "Windows";
+                        importedSettings.Add($"→ Host OS patching enabled (will patch to {targetOS})");
+                        Log.Information(this, $"Host OS patching enabled (current: {(isCurrentWindows ? "Windows" : "Unix")}, target: {targetOS})", LogTarget.System);
+                    }
+                }
+
+                if (srr.DetectedFileAttributes.HasValue)
+                {
+                    importedSettings.Add($"File Attributes: 0x{srr.DetectedFileAttributes:X8}");
+                    Log.Debug(this, $"Detected file attributes: 0x{srr.DetectedFileAttributes:X8}", LogTarget.System);
+                }
+
+                // Update the UI to show detected values
+                UpdateHostOSDetectedLabel();
+
+                // Display CMT (comment service block) specific metadata
+                if (srr.CmtHostOS.HasValue)
+                {
+                    importedSettings.Add($"CMT Host OS: {srr.CmtHostOSName} (0x{srr.CmtHostOS:X2})");
+                }
+
+                // Auto-configure timestamp precision checkboxes from detected values
+                // Use file header precision if available, otherwise fall back to CMT precision
+                var mtimePrecision = srr.FileMtimePrecision ?? srr.CmtMtimePrecision;
+                var ctimePrecision = srr.FileCtimePrecision ?? srr.CmtCtimePrecision;
+                var atimePrecision = srr.FileAtimePrecision ?? srr.CmtAtimePrecision;
+
+                if (mtimePrecision.HasValue)
+                {
+                    SetTimestampPrecisionCheckboxes("TSM", mtimePrecision.Value,
+                        cbSwitchTSM0, cbSwitchTSM1, cbSwitchTSM2, cbSwitchTSM3, cbSwitchTSM4);
+                    importedSettings.Add($"Mtime precision: -tsm{(int)mtimePrecision.Value}");
+                    Log.Information(this, $"Timestamp (mtime): -tsm{(int)mtimePrecision.Value}", LogTarget.System);
+                }
+
+                if (ctimePrecision.HasValue)
+                {
+                    SetTimestampPrecisionCheckboxes("TSC", ctimePrecision.Value,
+                        cbSwitchTSC0, cbSwitchTSC1, cbSwitchTSC2, cbSwitchTSC3, cbSwitchTSC4);
+                    importedSettings.Add($"Ctime precision: -tsc{(int)ctimePrecision.Value}");
+                    Log.Information(this, $"Timestamp (ctime): -tsc{(int)ctimePrecision.Value}", LogTarget.System);
+                }
+
+                if (atimePrecision.HasValue)
+                {
+                    SetTimestampPrecisionCheckboxes("TSA", atimePrecision.Value,
+                        cbSwitchTSA0, cbSwitchTSA1, cbSwitchTSA2, cbSwitchTSA3, cbSwitchTSA4);
+                    importedSettings.Add($"Atime precision: -tsa{(int)atimePrecision.Value}");
+                    Log.Information(this, $"Timestamp (atime): -tsa{(int)atimePrecision.Value}", LogTarget.System);
+                }
+
+                if (srr.CmtFileAttributes.HasValue && srr.CmtFileAttributes.Value != 0)
+                {
+                    importedSettings.Add($"CMT attributes: 0x{srr.CmtFileAttributes:X8}");
                 }
 
                 // Set compression method (already 0-5 from RARHeaderReader)
@@ -293,14 +427,27 @@ namespace WinRARRed.Forms
 
                     if (method >= 0 && method <= 5)
                     {
-                         cbSwitchM0.Checked = method == 0;
-                         cbSwitchM1.Checked = method == 1;
-                         cbSwitchM2.Checked = method == 2;
-                         cbSwitchM3.Checked = method == 3;
-                         cbSwitchM4.Checked = method == 4;
-                         cbSwitchM5.Checked = method == 5;
-                         
-                         importedSettings.Add($"Compression: -m{method}");
+                        // Uncheck all compression methods first, then set only the detected one
+                        cbSwitchM0.Checked = false;
+                        cbSwitchM1.Checked = false;
+                        cbSwitchM2.Checked = false;
+                        cbSwitchM3.Checked = false;
+                        cbSwitchM4.Checked = false;
+                        cbSwitchM5.Checked = false;
+
+                        switch (method)
+                        {
+                            case 0: cbSwitchM0.Checked = true; break;
+                            case 1: cbSwitchM1.Checked = true; break;
+                            case 2: cbSwitchM2.Checked = true; break;
+                            case 3: cbSwitchM3.Checked = true; break;
+                            case 4: cbSwitchM4.Checked = true; break;
+                            case 5: cbSwitchM5.Checked = true; break;
+                        }
+
+                        string[] methodNames = ["Store", "Fastest", "Fast", "Normal", "Good", "Best"];
+                        importedSettings.Add($"Compression: -m{method}");
+                        Log.Information(this, $"Compression method: -m{method} ({methodNames[method]})", LogTarget.System);
                     }
                     else
                     {
@@ -328,38 +475,50 @@ namespace WinRARRed.Forms
                     cbSwitchMD256M.Checked = false;
                     cbSwitchMD512M.Checked = false;
                     cbSwitchMD1G.Checked = false;
-                    
+
                     // Set the matching dictionary size
+                    string dictArg = "";
                     switch (srr.DictionarySize.Value)
                     {
                         case 64:
                             cbSwitchMD64K.Checked = true;
+                            dictArg = "-md64k";
                             importedSettings.Add("Dictionary: 64 KB");
                             break;
                         case 128:
                             cbSwitchMD128K.Checked = true;
+                            dictArg = "-md128k";
                             importedSettings.Add("Dictionary: 128 KB");
                             break;
                         case 256:
                             cbSwitchMD256K.Checked = true;
+                            dictArg = "-md256k";
                             importedSettings.Add("Dictionary: 256 KB");
                             break;
                         case 512:
                             cbSwitchMD512K.Checked = true;
+                            dictArg = "-md512k";
                             importedSettings.Add("Dictionary: 512 KB");
                             break;
                         case 1024:
                             cbSwitchMD1024K.Checked = true;
+                            dictArg = "-md1024k";
                             importedSettings.Add("Dictionary: 1024 KB");
                             break;
                         case 2048:
                             cbSwitchMD2048K.Checked = true;
+                            dictArg = "-md2048k";
                             importedSettings.Add("Dictionary: 2048 KB");
                             break;
                         case 4096:
                             cbSwitchMD4096K.Checked = true;
+                            dictArg = "-md4096k";
                             importedSettings.Add("Dictionary: 4096 KB");
                             break;
+                    }
+                    if (!string.IsNullOrEmpty(dictArg))
+                    {
+                        Log.Information(this, $"Dictionary size: {dictArg} ({srr.DictionarySize.Value} KB)", LogTarget.System);
                     }
                 }
                 
@@ -370,6 +529,43 @@ namespace WinRARRed.Forms
                     cbSwitchSDash.Checked = !srr.IsSolidArchive.Value;
                     importedSettings.Add(srr.IsSolidArchive.Value ? "Solid: Yes" : "Solid: No (-s-)");
                 }
+
+                // Set archive format based on UnpVer
+                // UnpVer < 50 = RAR4 format, UnpVer >= 50 = RAR5 format
+                if (srr.RARVersion.HasValue)
+                {
+                    cbSwitchMA4.Checked = false;
+                    cbSwitchMA5.Checked = false;
+
+                    if (srr.RARVersion.Value < 50)
+                    {
+                        // RAR4 format - need -ma4 for RAR 5.50+ to force RAR4 output
+                        cbSwitchMA4.Checked = true;
+                        importedSettings.Add("Archive format: RAR4 (-ma4)");
+                        Log.Information(this, $"Archive format: RAR4 (-ma4) based on UnpVer={srr.RARVersion.Value}", LogTarget.System);
+                    }
+                    else
+                    {
+                        // RAR5 format
+                        cbSwitchMA5.Checked = true;
+                        importedSettings.Add("Archive format: RAR5 (-ma5)");
+                        Log.Information(this, $"Archive format: RAR5 (-ma5) based on UnpVer={srr.RARVersion.Value}", LogTarget.System);
+                    }
+                }
+
+                // Disable file attribute options when importing SRR
+                // The attributes from the original archive are detected and will be patched if needed
+                cbFileA.CheckState = CheckState.Unchecked;
+                cbFileI.CheckState = CheckState.Unchecked;
+
+                // Disable options that add unnecessary combinations
+                cbSwitchAI.Checked = false;  // Don't test with/without -ai
+                cbSwitchMT.Checked = false;  // Don't test different thread counts
+
+                // Ensure -r (recurse) is enabled for proper directory handling
+                cbSwitchR.Checked = true;
+
+                importedSettings.Add("Optimized: Single attribute/thread configuration");
                 
                 bool volumeSizeApplied = false;
                 if (srr.RarFiles.Count > 1 && srr.VolumeSizeBytes.HasValue)
@@ -420,6 +616,8 @@ namespace WinRARRed.Forms
                     
                     List<string> indicators = [];
                     
+                    Log.Information(this, $"RAR version analysis (UnpVer={unpVer}):", LogTarget.System);
+
                     // PRIMARY: Check UnpVer and dictionary size for RAR 5.0+
                     if (unpVer >= 50 && unpVer < 70)
                     {
@@ -427,12 +625,14 @@ namespace WinRARRed.Forms
                         cbRARVersion6.Checked = true;
                         importedSettings.Add($"✓ RAR 5.0 Format (UNP_VER={unpVer})");
                         importedSettings.Add("Selected: RAR 5.x, 6.x");
+                        Log.Information(this, "  RAR 5.0 format detected -> testing RAR 5.x, 6.x", LogTarget.System);
                     }
                     else if (unpVer >= 70)
                     {
                         cbRARVersion6.Checked = true;
                         importedSettings.Add($"✓ RAR 7.0+ Format (UNP_VER={unpVer})");
                         importedSettings.Add("Selected: RAR 6.x+");
+                        Log.Information(this, "  RAR 7.0+ format detected -> testing RAR 6.x+", LogTarget.System);
                     }
                     // Check for large dictionaries (RAR 5.0+ exclusive)
                     else if (srr.DictionarySize.HasValue && srr.DictionarySize.Value > 4096)
@@ -441,17 +641,23 @@ namespace WinRARRed.Forms
                         cbRARVersion6.Checked = true;
                         importedSettings.Add($"✓ Large Dictionary ({srr.DictionarySize}KB) = RAR 5.0+");
                         importedSettings.Add("Selected: RAR 5.x, 6.x");
+                        Log.Information(this, $"  Large dictionary ({srr.DictionarySize}KB) -> testing RAR 5.x, 6.x", LogTarget.System);
                     }
                     // SECONDARY: Use feature flags to narrow RAR 2.x/3.x/4.x range
+                    // Also include RAR 5.x/6.x since they can create RAR4 format with -ma4 flag
                     else
                     {
                         // Start with UnpVer baseline
                         bool isRar2 = unpVer <= 29;
                         bool isRar3 = unpVer >= 20 && unpVer <= 36;
                         bool isRar4 = unpVer >= 26 && unpVer <= 36;
-                        
+                        // RAR 5.x and 6.x can create RAR4 format archives with -ma4 flag
+                        bool isRar5 = true;
+                        bool isRar6 = true;
+
                         indicators.Add($"UnpVer={unpVer}");
-                        
+                        indicators.Add("RAR4 format (5.x/6.x can create with -ma4)");
+
                         // Refine using feature flags
                         if (srr.HasFirstVolumeFlag == true || srr.HasUnicodeNames == true)
                         {
@@ -460,19 +666,19 @@ namespace WinRARRed.Forms
                             if (srr.HasFirstVolumeFlag == true) indicators.Add("FirstVolume flag (RAR 3.0+)");
                             if (srr.HasUnicodeNames == true) indicators.Add("Unicode names (RAR 3.0+)");
                         }
-                        
+
                         if (srr.HasNewVolumeNaming == true && unpVer < 29)
                         {
                             // New volume naming introduced in RAR 2.9
                             indicators.Add("New volume naming (RAR 2.9+)");
                         }
-                        
+
                         if (srr.HasLargeFiles == true && unpVer < 26)
                         {
                             // Large file support introduced in RAR 2.6
                             indicators.Add("Large file support (RAR 2.6+)");
                         }
-                        
+
                         // Special case: UnpVer=36 is RAR 3.6+ specific
                         if (unpVer == 36)
                         {
@@ -481,22 +687,28 @@ namespace WinRARRed.Forms
                             isRar4 = true;
                             indicators.Add("Alternative hash algorithm (RAR 3.6+)");
                         }
-                        
+
                         // Apply the refined selection
                         cbRARVersion2.Checked = isRar2;
                         cbRARVersion3.Checked = isRar3;
                         cbRARVersion4.Checked = isRar4;
-                        
+                        cbRARVersion5.Checked = isRar5;
+                        cbRARVersion6.Checked = isRar6;
+
                         // Build description
                         List<string> selectedVersions = [];
                         if (isRar2) selectedVersions.Add("2.x");
                         if (isRar3) selectedVersions.Add("3.x");
                         if (isRar4) selectedVersions.Add("4.x");
-                        
+                        if (isRar5) selectedVersions.Add("5.x");
+                        if (isRar6) selectedVersions.Add("6.x");
+
                         if (selectedVersions.Count > 0)
                         {
                             importedSettings.Add($"✓ Indicators: {string.Join(", ", indicators)}");
                             importedSettings.Add($"Selected: RAR {string.Join(", ", selectedVersions)}");
+                            Log.Information(this, $"  Indicators: {string.Join(", ", indicators)}", LogTarget.System);
+                            Log.Information(this, $"  Testing RAR versions: {string.Join(", ", selectedVersions)}", LogTarget.System);
                         }
                         else
                         {
@@ -508,6 +720,7 @@ namespace WinRARRed.Forms
                             cbRARVersion6.Checked = true;
                             importedSettings.Add($"⚠ Uncertain version (UNP_VER={unpVer})");
                             importedSettings.Add("Selected: All versions (broad search)");
+                            Log.Warning(this, $"  Uncertain version -> testing all RAR versions", LogTarget.System);
                         }
                     }
                 }
@@ -529,17 +742,20 @@ namespace WinRARRed.Forms
 
                 if (importedSettings.Count > 0)
                 {
-                    string message = "SRR file imported successfully!\n\nSettings applied:\n" + 
+                    Log.Information(this, $"=== SRR Import Complete ===", LogTarget.System);
+                    string message = "SRR file imported successfully!\n\nSettings applied:\n" +
                                    string.Join("\n", importedSettings);
                     GUIHelper.ShowInfo(this, message);
                 }
                 else
                 {
+                    Log.Warning(this, "Could not extract any settings from SRR file", LogTarget.System);
                     GUIHelper.ShowWarning(this, "Could not extract any settings from SRR file.");
                 }
             }
             catch (Exception ex)
             {
+                Log.Error(this, $"Failed to load SRR file: {ex.Message}", LogTarget.System);
                 GUIHelper.ShowError(this, $"Failed to load SRR file: {ex.Message}");
             }
         }
@@ -660,6 +876,7 @@ namespace WinRARRed.Forms
                 CommandLineArguments = CreateCommandLineArgumentsCombinations(),
                 RARVersions = rarVersions,
                 DeleteRARFiles = cbDeleteRARFiles.Checked,
+                StopOnFirstMatch = cbStopOnFirstMatch.Checked,
                 ArchiveFileCrcs = new Dictionary<string, string>(ImportedArchiveFileCrcs, StringComparer.OrdinalIgnoreCase),
                 ArchiveFilePaths = new HashSet<string>(ImportedArchiveFiles, StringComparer.OrdinalIgnoreCase),
                 ArchiveDirectoryPaths = new HashSet<string>(ImportedArchiveDirectories, StringComparer.OrdinalIgnoreCase),
@@ -669,8 +886,53 @@ namespace WinRARRed.Forms
                 FileTimestamps = new Dictionary<string, DateTime>(ImportedFileTimestamps, StringComparer.OrdinalIgnoreCase),
                 FileCreationTimes = new Dictionary<string, DateTime>(ImportedFileCreationTimes, StringComparer.OrdinalIgnoreCase),
                 FileAccessTimes = new Dictionary<string, DateTime>(ImportedFileAccessTimes, StringComparer.OrdinalIgnoreCase),
-                ArchiveComment = ImportedArchiveComment
+                ArchiveComment = ImportedArchiveComment,
+                ArchiveCommentBytes = ImportedArchiveCommentBytes,
+                CmtCompressedData = ImportedCmtCompressedData,
+                CmtCompressionMethod = ImportedCmtCompressionMethod,
+                // Host OS patching - use exact values detected from SRR
+                EnableHostOSPatching = cbEnableHostOSPatching.Checked,
+                DetectedFileHostOS = DetectedFileHostOS,
+                DetectedFileAttributes = DetectedFileAttributes,
+                DetectedCmtHostOS = DetectedCmtHostOS,
+                DetectedCmtFileTime = DetectedCmtFileTime,
+                DetectedCmtFileAttributes = DetectedCmtFileAttributes
             };
+        }
+
+        private void UpdateHostOSDetectedLabel()
+        {
+            if (DetectedFileHostOS.HasValue)
+            {
+                string osName = DetectedFileHostOS switch
+                {
+                    0 => "MS-DOS",
+                    1 => "OS/2",
+                    2 => "Windows",
+                    3 => "Unix",
+                    4 => "Mac OS",
+                    5 => "BeOS",
+                    _ => $"Unknown ({DetectedFileHostOS})"
+                };
+                lblHostOSDetected.Text = $"Detected: {osName} (0x{DetectedFileHostOS:X2})";
+                lblHostOSInfo.Text = $"Attrs: 0x{DetectedFileAttributes ?? 0:X8}";
+            }
+            else
+            {
+                lblHostOSDetected.Text = "";
+                lblHostOSInfo.Text = "Import an SRR to detect Host OS and attributes";
+            }
+        }
+
+        private static void SetTimestampPrecisionCheckboxes(string prefix, TimestampPrecision precision,
+            CheckBox cb0, CheckBox cb1, CheckBox cb2, CheckBox cb3, CheckBox cb4)
+        {
+            // Set only the checkbox matching the detected precision, uncheck others
+            cb0.Checked = precision == TimestampPrecision.NotSaved;
+            cb1.Checked = precision == TimestampPrecision.OneSecond;
+            cb2.Checked = precision == TimestampPrecision.HighPrecision1;
+            cb3.Checked = precision == TimestampPrecision.HighPrecision2;
+            cb4.Checked = precision == TimestampPrecision.NtfsPrecision;
         }
 
         private List<RARCommandLineArgument[]> CreateCommandLineArgumentsCombinations()
@@ -687,23 +949,16 @@ namespace WinRARRed.Forms
             AddSwitch(archivingFormats, cbSwitchMA4, new("-ma4", 500));
             AddSwitch(archivingFormats, cbSwitchMA5, new("-ma5", 500));
 
-            // RAR version 1,2,3 don't use 'k', 'm' or 'g' modifiers
-            // RAR version 4,5,6 and later use 'm' by default if not specified; so we need to specify it
+            // Dictionary sizes - use 'k' suffix for RAR 3.x-4.x compatibility (works across all versions)
+            // RAR 2.x uses no suffix, RAR 3.x-4.x prefer 'k' suffix, RAR 5.x+ accepts both
             List<RARCommandLineArgument> dictionarySizes = [];
-            AddSwitch(dictionarySizes, cbSwitchMD64K, new("-md64", 200, 499, RARArchiveVersion.RAR4));
-            AddSwitch(dictionarySizes, cbSwitchMD64K, new("-md64k", 200, 499, RARArchiveVersion.RAR4));
-            AddSwitch(dictionarySizes, cbSwitchMD128K, new("-md128", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD128K, new("-md128k", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD256K, new("-md256", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD256K, new("-md256k", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD512K, new("-md512", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD512K, new("-md512k", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD1024K, new("-md1024", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD1024K, new("-md1024k", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD2048K, new("-md2048", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD2048K, new("-md2048k", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD4096K, new("-md4096", 200, 499, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-            AddSwitch(dictionarySizes, cbSwitchMD4096K, new("-md4096k", 500, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD64K, new("-md64k", 200, RARArchiveVersion.RAR4));
+            AddSwitch(dictionarySizes, cbSwitchMD128K, new("-md128k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD256K, new("-md256k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD512K, new("-md512k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD1024K, new("-md1024k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD2048K, new("-md2048k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+            AddSwitch(dictionarySizes, cbSwitchMD4096K, new("-md4096k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
             AddSwitch(dictionarySizes, cbSwitchMD8M, new("-md8m", 500, RARArchiveVersion.RAR5));
             AddSwitch(dictionarySizes, cbSwitchMD16M, new("-md16m", 500, RARArchiveVersion.RAR5));
             AddSwitch(dictionarySizes, cbSwitchMD32M, new("-md32m", 500, RARArchiveVersion.RAR5));
@@ -914,7 +1169,6 @@ namespace WinRARRed.Forms
             if (checkbox.Checked)
             {
                 list.Add(argument);
-            }
         }
     }
 }

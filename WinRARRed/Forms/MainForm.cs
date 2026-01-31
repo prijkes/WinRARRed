@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using WinRARRed.Controls;
@@ -9,10 +10,18 @@ using WinRARRed.Cryptography;
 using WinRARRed.Diagnostics;
 using WinRARRed.IO;
 
-namespace WinRARRed.Forms
+namespace WinRARRed.Forms;
+
+public partial class MainForm : Form
 {
-    public partial class MainForm : Form
-    {
+        private const int WM_SETREDRAW = 0x000B;
+        private const int WM_USER = 0x0400;
+        private const int EM_GETEVENTMASK = WM_USER + 59;
+        private const int EM_SETEVENTMASK = WM_USER + 69;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
         private Manager? Manager = null;
 
         private readonly SettingsOptionsForm OptionsForm;
@@ -61,6 +70,18 @@ namespace WinRARRed.Forms
         private void TsmiSettingsOptions_Click(object? sender, EventArgs e)
         {
             OptionsForm.ShowDialog(this);
+        }
+
+        private void tsmiToolsFileInspector_Click(object? sender, EventArgs e)
+        {
+            var form = new FileInspectorForm();
+            form.Show(this);
+        }
+
+        private void tsmiToolsFileCompare_Click(object? sender, EventArgs e)
+        {
+            var form = new FileCompareForm();
+            form.Show(this);
         }
 
         private void OptionsForm_VerificationFileExtracted(object? sender, string verificationFilePath)
@@ -172,7 +193,9 @@ namespace WinRARRed.Forms
 
         private void BtnClearLog_Click(object? sender, EventArgs e)
         {
-            tbLog.Clear();
+            rtbLogSystem.Clear();
+            rtbLogPhase1.Clear();
+            rtbLogPhase2.Clear();
         }
 
         private async void BtnStart_Click(object? sender, EventArgs e)
@@ -272,7 +295,10 @@ namespace WinRARRed.Forms
 
             gbInput.Enabled = false;
 
-            tbLog.Clear();
+            rtbLogSystem.Clear();
+            rtbLogPhase1.Clear();
+            rtbLogPhase2.Clear();
+            tabControlLogs.SelectedTab = tabPageSystem;
 
             btnStart.Text = "Stop";
 
@@ -347,9 +373,9 @@ namespace WinRARRed.Forms
             Manager?.Stop();
         }
 
-        private void Log_Logged(object? sender, string e)
+        private void Log_Logged(object? sender, LogEventArgs e)
         {
-            Log(e);
+            Log(e.Message, e.Target);
         }
 
         private static HashSet<string> ReadVerificationFile(string verificationFilePath, HashType type)
@@ -441,39 +467,28 @@ namespace WinRARRed.Forms
             WinRARRed.Log.Write(this, line);
         }
 
-        private static void CopyFilesRecursively(string sourcePath, string targetPath)
-        {
-            foreach (string dirPath in Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories))
-            {
-                string relativePath = Path.GetRelativePath(sourcePath, dirPath);
-                string newDirPath = Path.Combine(targetPath, relativePath);
-                Directory.CreateDirectory(newDirPath);
-            }
+        private void Log(string text) => Log(text, LogTarget.System);
 
-            foreach (string filePath in Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories))
-            {
-                string relativePath = Path.GetRelativePath(sourcePath, filePath);
-                string dstPath = Path.Combine(targetPath, relativePath);
-                if (!File.Exists(dstPath))
-                {
-                    File.Copy(filePath, dstPath);
-                }
-            }
-        }
-
-        private void Log(string text)
+        private void Log(string text, LogTarget target)
         {
             if (InvokeRequired)
             {
                 try
                 {
-                    Invoke((MethodInvoker)delegate { Log(text); });
+                    Invoke((MethodInvoker)delegate { Log(text, target); });
                 }
                 catch
                 {
                 }
                 return;
             }
+
+            RichTextBox rtbLog = target switch
+            {
+                LogTarget.Phase1 => rtbLogPhase1,
+                LogTarget.Phase2 => rtbLogPhase2,
+                _ => rtbLogSystem
+            };
 
             StringBuilder strBuilder = new();
             string dateTime = DateTime.Now.ToString("MM/dd/yyyy HH:mm:ss.fff");
@@ -496,33 +511,56 @@ namespace WinRARRed.Forms
             try
             {
                 // Check if log has exceeded 1000 lines
-                int lineCount = tbLog.Lines.Length;
+                int lineCount = rtbLog.Lines.Length;
                 if (lineCount > 1000)
                 {
-                    tbLog.Clear();
+                    rtbLog.Clear();
                 }
 
                 if (cbAutoScroll.Checked)
                 {
-                    tbLog.AppendText(strBuilder.ToString());
+                    rtbLog.AppendText(strBuilder.ToString());
                 }
                 else
                 {
-                    // Save current scroll position
-                    int selectionStart = tbLog.SelectionStart;
-                    int selectionLength = tbLog.SelectionLength;
-                    
-                    // Append text without scrolling
-                    tbLog.Text += strBuilder.ToString();
-                    
-                    // Restore scroll position
-                    tbLog.SelectionStart = selectionStart;
-                    tbLog.SelectionLength = selectionLength;
+                    // Suspend drawing and events
+                    SendMessage(rtbLog.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+                    IntPtr eventMask = SendMessage(rtbLog.Handle, EM_GETEVENTMASK, IntPtr.Zero, IntPtr.Zero);
+
+                    // Save scroll position via first visible char index
+                    int firstVisibleChar = rtbLog.GetCharIndexFromPosition(new System.Drawing.Point(0, 0));
+                    int selectionStart = rtbLog.SelectionStart;
+                    int selectionLength = rtbLog.SelectionLength;
+
+                    // Append text
+                    rtbLog.AppendText(strBuilder.ToString());
+
+                    // Restore selection and scroll position
+                    rtbLog.SelectionStart = selectionStart;
+                    rtbLog.SelectionLength = selectionLength;
+                    rtbLog.Select(firstVisibleChar, 0);
+                    rtbLog.ScrollToCaret();
+                    rtbLog.SelectionStart = selectionStart;
+                    rtbLog.SelectionLength = selectionLength;
+
+                    // Resume events and drawing
+                    SendMessage(rtbLog.Handle, EM_SETEVENTMASK, IntPtr.Zero, eventMask);
+                    SendMessage(rtbLog.Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                    rtbLog.Invalidate();
+                }
+
+                // Auto-switch to tab with new content if it's a different phase
+                if (target == LogTarget.Phase1 && tabControlLogs.SelectedTab != tabPagePhase1)
+                {
+                    tabControlLogs.SelectedTab = tabPagePhase1;
+                }
+                else if (target == LogTarget.Phase2 && tabControlLogs.SelectedTab != tabPagePhase2)
+                {
+                    tabControlLogs.SelectedTab = tabPagePhase2;
                 }
             }
             catch (ObjectDisposedException)
-            {
-            }
+        {
         }
     }
 }

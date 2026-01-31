@@ -1,8 +1,7 @@
-﻿
-namespace WinRARRed.Forms
+﻿namespace WinRARRed.Forms;
+
+partial class ViewCommandLinesForm
 {
-    partial class ViewCommandLinesForm
-    {
         /// <summary>
         /// Required designer variable.
         /// </summary>
@@ -59,6 +58,5 @@ namespace WinRARRed.Forms
 
         #endregion
 
-        private System.Windows.Forms.TextBox tbCommandLines;
-    }
+    private System.Windows.Forms.TextBox tbCommandLines;
 }

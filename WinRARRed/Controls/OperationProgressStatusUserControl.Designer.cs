@@ -1,8 +1,7 @@
-﻿
-namespace WinRARRed.Controls
+﻿namespace WinRARRed.Controls;
+
+partial class OperationProgressStatusUserControl
 {
-    partial class OperationProgressStatusUserControl
-    {
         /// <summary> 
         /// Required designer variable.
         /// </summary>
@@ -328,6 +327,5 @@ namespace WinRARRed.Controls
         private System.Windows.Forms.Label label16;
         private System.Windows.Forms.Label label17;
         private System.Windows.Forms.Label lblStatusOperationSpeed;
-        private System.Windows.Forms.Label lblStatusOperationEstimatedFinishDateTime;
-    }
+    private System.Windows.Forms.Label lblStatusOperationEstimatedFinishDateTime;
 }

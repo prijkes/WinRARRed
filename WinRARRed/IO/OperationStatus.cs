@@ -1,11 +1,22 @@
-﻿namespace WinRARRed.IO
+﻿namespace WinRARRed.IO;
+
+/// <summary>
+/// Specifies the current state of a long-running operation.
+/// </summary>
+public enum OperationStatus
 {
-    public enum OperationStatus
-    {
-        Running,
+    /// <summary>
+    /// The operation is currently executing.
+    /// </summary>
+    Running,
 
-        Paused,
+    /// <summary>
+    /// The operation is temporarily paused.
+    /// </summary>
+    Paused,
 
-        Completed
-    }
+    /// <summary>
+    /// The operation has finished (check <see cref="OperationCompletionStatus"/> for outcome).
+    /// </summary>
+    Completed
 }
