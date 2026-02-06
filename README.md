@@ -12,16 +12,35 @@ WinRARRed is a Windows utility that brute-forces WinRAR command line settings to
 4. Calculates CRC32 or SHA1 and compares it to the verification file.
 5. When a match is found, the archive is kept and reported.
 
+An optional **two-phase** approach speeds things up dramatically:
+
+- **Phase 1** tests only the CMT (comment) block against each RAR version. This is fast because the data is tiny.
+- **Phase 2** runs the full RAR creation with only the versions that matched in Phase 1.
+
 ## Features
 
 - Brute-force across multiple WinRAR versions (2.x through 6.x) and archive formats (`-ma4`, `-ma5`).
 - Switch matrix support: compression level, dictionary size, solid on/off, recursion, timestamp flags, volume sizing, and `-mt` thread counts.
 - File attribute toggling (Archive, NotContentIndexed) or `-ai` to ignore attributes.
-- SRR import to prefill settings and verify input files (see below).
+- Host OS patching: when brute-forcing on Windows for a Unix-created archive, headers are automatically patched to match the original OS, attributes, and timestamps.
+- SRR import to prefill settings and verify input files.
 - Multi-volume handling for `.partXX.rar` and legacy `.r00` naming.
 - View generated command lines from the UI.
 - Logging to disk (app logs + per-attempt logs).
 - Optional cleanup of non-matching archives to control disk usage.
+
+### File Inspector
+
+A built-in binary inspector for RAR and SRR files with:
+
+- Tree view of all header blocks (signature, archive header, file headers, service blocks, end of archive).
+- Property list showing every field in byte order with hex values and decoded descriptions.
+- Hex view with highlighting: selecting a field highlights its bytes; selecting a byte highlights the owning field.
+- Full RAR 4.x and RAR 5.x support, including extra area records (encryption, file hash, timestamps, locator, metadata, redirection, unix owner) and data areas (stored/compressed comment text).
+- SRR block inspection with correct offset tracking for all block types (SRR header, stored files, RAR file references, OSO hashes, RAR padding).
+- Drag-and-drop file opening.
+- Tree filtering to search blocks by name.
+- Export of raw block data via context menu.
 
 ## Requirements
 
@@ -59,9 +78,74 @@ Use `Options -> Import SRR` to apply metadata from an `.srr`:
 - Candidate RAR version range based on SRR headers.
 - Stored `.sfv` extraction to `%TEMP%\WinRARRed\srr-import\...` when present.
 
+## Project structure
+
+```
+WinRARRed/
+├── RARLib/                     # RAR format library (no UI dependencies)
+│   ├── Decompression/          # Native LZSS + PPMd decompressors
+│   │   └── PPMd/               # PPMd model, range coder, allocator
+│   ├── RARHeaderReader.cs      # RAR 4.x header parsing
+│   ├── RAR5HeaderReader.cs     # RAR 5.x header parsing
+│   ├── RARDetailedHeader.cs    # Detailed per-field parsing with byte offsets
+│   ├── RARPatcher.cs           # Post-creation header patching
+│   └── RARUtils.cs             # CRC, date conversion utilities
+│
+├── SRRLib/                     # SRR format library (depends on RARLib)
+│   ├── SRRFile.cs              # Main parser, extracts RAR headers from SRR
+│   └── SRRBlock.cs             # Block type definitions
+│
+├── WinRARRed/                  # Main GUI application
+│   ├── Forms/                  # Windows Forms
+│   │   ├── MainForm.cs         # Main window, file selection, log display
+│   │   ├── FileInspectorForm.cs# RAR/SRR binary inspector with hex view
+│   │   ├── FileCompareForm.cs  # SRR/RAR comparison tool
+│   │   └── SettingsOptionsForm.cs
+│   ├── Controls/               # Custom controls
+│   │   └── HexViewControl.cs   # Hex viewer with field highlighting
+│   ├── Diagnostics/            # Process management (CliWrap wrapper)
+│   ├── IO/                     # File I/O (SFV, SHA1 parsing)
+│   ├── Cryptography/           # CRC32, SHA1 hashing
+│   ├── Manager.cs              # Core brute-force orchestration
+│   ├── RAROptions.cs           # Configuration options
+│   └── docs/                   # Technical documentation
+│
+├── RARLib.Tests/               # xUnit tests for RARLib (170 tests)
+├── SRRLib.Tests/               # xUnit tests for SRRLib (43 tests)
+│
+└── tools/                      # Python CLI scripts
+    ├── bruteforce_rar.py       # Full RAR brute-force from SRR
+    ├── bruteforce_cmt.py       # CMT block brute-force only
+    ├── inspect_rar_headers.py  # Inspect RAR headers
+    ├── inspect_srr_headers.py  # Inspect SRR headers
+    └── ...
+```
+
 ## Build
 
-Open `WinRARRed.sln` in Visual Studio 2022 and build `Release` / `x64`.
+```bash
+# Build
+dotnet build WinRARRed/WinRARRed.csproj
+
+# Run
+dotnet run --project WinRARRed/WinRARRed.csproj
+
+# Build release
+dotnet publish WinRARRed/WinRARRed.csproj -c Release
+
+# Run tests
+dotnet test RARLib.Tests/RARLib.Tests.csproj
+dotnet test SRRLib.Tests/SRRLib.Tests.csproj
+```
+
+## Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| Crc32.NET | 1.2.0 | CRC32 calculation |
+| CliWrap | 3.10.0 | Process execution wrapper |
+| SharpCompress | 0.33.0 | RAR extraction (backup) |
+| Serilog | 4.2.0 | Structured logging |
 
 ## License
 
