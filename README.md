@@ -63,12 +63,6 @@ Use `Options -> Import SRR` to apply metadata from an `.srr`:
 
 Open `WinRARRed.sln` in Visual Studio 2022 and build `Release` / `x64`.
 
-## Repo contents
-
-- `WinRARRed/` - C# WinForms application.
-- `tools/` - helper scripts for SRR inspection (optional).
-- `pyrescene/` and `unrar/` - bundled upstream sources/reference material.
-
 ## License
 
 MIT - see [LICENSE](LICENSE).
