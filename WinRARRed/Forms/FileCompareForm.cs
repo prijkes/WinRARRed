@@ -12,10 +12,10 @@ namespace WinRARRed.Forms;
 
 public partial class FileCompareForm : Form
 {
-    // Colors for difference highlighting
-    private static readonly Color ColorAdded = Color.FromArgb(200, 255, 200);    // Light green
-    private static readonly Color ColorRemoved = Color.FromArgb(255, 200, 200);  // Light red
-    private static readonly Color ColorModified = Color.FromArgb(255, 255, 180); // Light yellow
+    // Colors for difference highlighting (color-blind accessible: blue/orange instead of red/green)
+    private static readonly Color ColorAdded = Color.FromArgb(200, 220, 255);    // Light blue
+    private static readonly Color ColorRemoved = Color.FromArgb(255, 220, 180);  // Light orange
+    private static readonly Color ColorModified = Color.FromArgb(255, 245, 200); // Light amber
     private static readonly Color ColorMatch = Color.White;
 
     private string? _leftFilePath;
@@ -1543,6 +1543,7 @@ public partial class FileCompareForm : Form
         if (_compareResult == null)
         {
             statusLabel.Text = "Load files on both sides to compare.";
+            diffSummaryPanel.Visible = false;
             return;
         }
 
@@ -1558,6 +1559,9 @@ public partial class FileCompareForm : Form
         if (totalDiffs == 0)
         {
             statusLabel.Text = "Files are identical.";
+            diffSummaryPanel.Visible = true;
+            diffSummaryPanel.BackColor = Color.FromArgb(220, 240, 220);
+            lblDiffSummary.Text = "No differences found - files are identical.";
         }
         else
         {
@@ -1570,6 +1574,10 @@ public partial class FileCompareForm : Form
             if (storedRemoved > 0) parts.Add($"{storedRemoved} stored file(s) removed");
 
             statusLabel.Text = $"{totalDiffs} difference(s) found: {string.Join(", ", parts)}";
+
+            diffSummaryPanel.Visible = true;
+            diffSummaryPanel.BackColor = Color.FromArgb(255, 245, 220);
+            lblDiffSummary.Text = $"{totalDiffs} difference(s): {string.Join(" | ", parts)}";
         }
     }
 

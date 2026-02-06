@@ -222,7 +222,7 @@ partial class MainForm
         groupBox12.Size = new System.Drawing.Size(747, 70);
         groupBox12.TabIndex = 12;
         groupBox12.TabStop = false;
-        groupBox12.Text = "Verification file";
+        groupBox12.Text = "3. Verification File (SFV/SHA1)";
         // 
         // label19
         // 
@@ -266,7 +266,7 @@ partial class MainForm
         groupBox1.Size = new System.Drawing.Size(747, 74);
         groupBox1.TabIndex = 1;
         groupBox1.TabStop = false;
-        groupBox1.Text = "WinRAR directory";
+        groupBox1.Text = "1. WinRAR Installations Directory";
         // 
         // linkLabel2
         // 
@@ -338,7 +338,7 @@ partial class MainForm
         groupBox2.Size = new System.Drawing.Size(747, 71);
         groupBox2.TabIndex = 2;
         groupBox2.TabStop = false;
-        groupBox2.Text = "Release directory";
+        groupBox2.Text = "2. Release Directory (files to RAR)";
         // 
         // label3
         // 
@@ -379,7 +379,7 @@ partial class MainForm
         groupBox3.Size = new System.Drawing.Size(747, 72);
         groupBox3.TabIndex = 4;
         groupBox3.TabStop = false;
-        groupBox3.Text = "Output directory";
+        groupBox3.Text = "4. Output Directory";
         // 
         // btnTemporaryDirectoryBrowse
         // 

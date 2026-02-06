@@ -269,7 +269,7 @@ public class SRRFile
 
     private static bool IsSrrBlockType(byte type)
     {
-        return type >= 0x69 && type <= 0x71;
+        return type is 0x69 or 0x6A or 0x6B or 0x6C or 0x71;
     }
 
     private static SrrHeaderBlock ParseHeaderBlock(BinaryReader reader, FileStream fs,

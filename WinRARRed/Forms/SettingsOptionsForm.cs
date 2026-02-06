@@ -52,9 +52,105 @@ public partial class SettingsOptionsForm : Form
         btnImportSrr.Click += BtnImportSrr_Click;
         btnSave.Click += BtnSave_Click;
 
+        SetupTooltips();
+
         RAROptions = GetRAROptions();
 
         Shown += OptionsForm_Shown;
+    }
+
+    private void SetupTooltips()
+    {
+        var toolTip = new ToolTip
+        {
+            AutoPopDelay = 15000,
+            InitialDelay = 300,
+            ReshowDelay = 200,
+            ShowAlways = true
+        };
+
+        // RAR Versions
+        toolTip.SetToolTip(cbRARVersion2, "RAR 2.x (versions 2.00-2.90). Oldest supported format.");
+        toolTip.SetToolTip(cbRARVersion3, "RAR 3.x (versions 3.00-3.93). Introduced -ts timestamp options at 3.20+.");
+        toolTip.SetToolTip(cbRARVersion4, "RAR 4.x (versions 4.00-4.20). Last major version using RAR4 format by default.");
+        toolTip.SetToolTip(cbRARVersion5, "RAR 5.x (versions 5.00-5.90). Introduced RAR5 format. 5.50+ defaults to RAR5.");
+        toolTip.SetToolTip(cbRARVersion6, "RAR 6.x (versions 6.00+). Always uses RAR5 format unless -ma4 is specified.");
+
+        // File Attributes
+        toolTip.SetToolTip(cbFileA, "Archive attribute (attrib +A). Tri-state: Checked=test both on/off, Indeterminate=always set.");
+        toolTip.SetToolTip(cbFileI, "Not Content Indexed attribute (attrib +I). Tri-state: same as Archive attribute.");
+        toolTip.SetToolTip(cbSwitchAI, "-ai: Ignore file attributes. Mutually exclusive with A/I attribute testing.");
+
+        // Compression Method
+        toolTip.SetToolTip(cbSwitchM0, "-m0: Store (no compression). Files are stored as-is.");
+        toolTip.SetToolTip(cbSwitchM1, "-m1: Fastest compression. Lowest ratio, fastest speed.");
+        toolTip.SetToolTip(cbSwitchM2, "-m2: Fast compression.");
+        toolTip.SetToolTip(cbSwitchM3, "-m3: Normal compression (RAR default).");
+        toolTip.SetToolTip(cbSwitchM4, "-m4: Good compression.");
+        toolTip.SetToolTip(cbSwitchM5, "-m5: Best compression. Highest ratio, slowest speed.");
+
+        // Archive Format
+        toolTip.SetToolTip(cbSwitchMA4, "-ma4: Force RAR 4.x archive format. Required for RAR 5.50+ to create RAR4 archives.");
+        toolTip.SetToolTip(cbSwitchMA5, "-ma5: Force RAR 5.0 archive format. Default for RAR 5.50+.");
+
+        // Dictionary Size
+        toolTip.SetToolTip(cbSwitchMD64K, "-md64k: 64 KB dictionary. Smallest window size.");
+        toolTip.SetToolTip(cbSwitchMD128K, "-md128k: 128 KB dictionary. Use -md128k (not -md128) for RAR 3.0x compatibility.");
+        toolTip.SetToolTip(cbSwitchMD256K, "-md256k: 256 KB dictionary.");
+        toolTip.SetToolTip(cbSwitchMD512K, "-md512k: 512 KB dictionary.");
+        toolTip.SetToolTip(cbSwitchMD1024K, "-md1024k: 1 MB dictionary.");
+        toolTip.SetToolTip(cbSwitchMD2048K, "-md2048k: 2 MB dictionary.");
+        toolTip.SetToolTip(cbSwitchMD4096K, "-md4096k: 4 MB dictionary. Maximum for RAR4 format.");
+        toolTip.SetToolTip(cbSwitchMD8M, "-md8m: 8 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD16M, "-md16m: 16 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD32M, "-md32m: 32 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD64M, "-md64m: 64 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD128M, "-md128m: 128 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD256M, "-md256m: 256 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD512M, "-md512m: 512 MB dictionary. RAR5 only.");
+        toolTip.SetToolTip(cbSwitchMD1G, "-md1g: 1 GB dictionary. RAR5 only.");
+
+        // Threading
+        toolTip.SetToolTip(cbSwitchMT, "-mt<N>: Number of CPU threads to use for compression.");
+        toolTip.SetToolTip(nupSwitchMTStart, "Minimum thread count to test.");
+        toolTip.SetToolTip(nupSwitchMTEnd, "Maximum thread count to test.");
+
+        // Volume/Splitting
+        toolTip.SetToolTip(cbSwitchV, "-v<size>: Create multi-volume archives with specified volume size.");
+        toolTip.SetToolTip(cbSwitchR, "-r: Recurse subdirectories.");
+        toolTip.SetToolTip(cbUseOldVolumeNaming, "Use old-style volume naming (.rar, .r00, .r01) instead of (.part1.rar, .part2.rar).");
+
+        // Timestamps
+        toolTip.SetToolTip(cbSwitchTSM0, "-tsm0: Do not save file modification time. Requires RAR 3.20+.");
+        toolTip.SetToolTip(cbSwitchTSM1, "-tsm1: Save modification time with 1-second precision (DOS).");
+        toolTip.SetToolTip(cbSwitchTSM2, "-tsm2: Save modification time with 2-second precision.");
+        toolTip.SetToolTip(cbSwitchTSM3, "-tsm3: Save modification time with high precision.");
+        toolTip.SetToolTip(cbSwitchTSM4, "-tsm4: Save modification time with NTFS 100ns precision.");
+        toolTip.SetToolTip(cbSwitchTSC0, "-tsc0: Do not save file creation time.");
+        toolTip.SetToolTip(cbSwitchTSC1, "-tsc1: Save creation time with 1-second precision.");
+        toolTip.SetToolTip(cbSwitchTSC2, "-tsc2: Save creation time with 2-second precision.");
+        toolTip.SetToolTip(cbSwitchTSC3, "-tsc3: Save creation time with high precision.");
+        toolTip.SetToolTip(cbSwitchTSC4, "-tsc4: Save creation time with NTFS 100ns precision.");
+        toolTip.SetToolTip(cbSwitchTSA0, "-tsa0: Do not save file access time.");
+        toolTip.SetToolTip(cbSwitchTSA1, "-tsa1: Save access time with 1-second precision.");
+        toolTip.SetToolTip(cbSwitchTSA2, "-tsa2: Save access time with 2-second precision.");
+        toolTip.SetToolTip(cbSwitchTSA3, "-tsa3: Save access time with high precision.");
+        toolTip.SetToolTip(cbSwitchTSA4, "-tsa4: Save access time with NTFS 100ns precision.");
+
+        // Solid/Disable Sorting
+        toolTip.SetToolTip(cbSwitchSDash, "-s-: Disable solid archiving.");
+        toolTip.SetToolTip(cbSwitchDS, "-ds: Disable name sort. Files are added in filesystem order.");
+
+        // Host OS Patching
+        toolTip.SetToolTip(cbEnableHostOSPatching, "After creating each test RAR, patch the Host OS byte and file attributes to match the original archive. Required when brute-forcing on Windows for Unix-created archives.");
+
+        // Output Options
+        toolTip.SetToolTip(cbDeleteRARFiles, "Delete non-matching RAR files after testing. Saves disk space during brute force.");
+        toolTip.SetToolTip(cbDeleteDuplicateCRCFiles, "Delete RAR files with duplicate CRC32 values. Only available when not deleting all non-matching files.");
+        toolTip.SetToolTip(cbStopOnFirstMatch, "Stop brute-forcing after finding the first matching RAR file.");
+
+        // Buttons
+        toolTip.SetToolTip(btnImportSrr, "Import settings from an SRR file. Auto-configures compression, dictionary, versions, timestamps, and Host OS.");
     }
 
     public void Toggle(bool enabled)

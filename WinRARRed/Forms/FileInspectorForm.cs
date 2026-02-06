@@ -1,16 +1,25 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows.Forms;
 using RARLib;
 using SRRLib;
+using WinRARRed.Controls;
 
 namespace WinRARRed.Forms;
 
 public partial class FileInspectorForm : Form
 {
+    private static readonly Color PropertyHasOffsetColor = Color.FromArgb(232, 245, 255);
+
     private string? _currentFilePath;
+    private byte[]? _fileBytes;
+    private Dictionary<string, ByteRange> _propertyOffsets = [];
+    private RARDetailedBlock? _currentDetailedBlock;
+    private List<TreeNode>? _allTreeNodes;
 
     public FileInspectorForm()
     {
@@ -36,17 +45,33 @@ public partial class FileInspectorForm : Form
         }
     }
 
+    private void ShowHexViewToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        splitContainerVertical.Panel2Collapsed = !showHexViewToolStripMenuItem.Checked;
+    }
+
     private void LoadFile(string filePath)
     {
         treeView.Nodes.Clear();
         listView.Items.Clear();
-        txtComment.Clear();
+
+        hexView.Clear();
+        txtTreeFilter.Clear();
+        _allTreeNodes = null;
+        lblTreeFilterCount.Text = "";
         _currentFilePath = filePath;
+        _propertyOffsets.Clear();
+        _currentDetailedBlock = null;
 
         string ext = Path.GetExtension(filePath).ToLowerInvariant();
 
         try
         {
+            // Load file bytes for hex view
+            _fileBytes = File.ReadAllBytes(filePath);
+            hexView.LoadData(_fileBytes);
+            groupBoxHex.Text = $"Hex View - {Path.GetFileName(filePath)}";
+
             if (ext == ".srr")
             {
                 LoadSRRFile(filePath);
@@ -61,149 +86,162 @@ public partial class FileInspectorForm : Form
         catch (Exception ex)
         {
             MessageBox.Show($"Error loading file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _fileBytes = null;
+            hexView.Clear();
+            groupBoxHex.Text = "Hex View";
         }
+    }
+
+    private void TxtTreeFilter_TextChanged(object? sender, EventArgs e)
+    {
+        ApplyTreeFilter();
+    }
+
+    private void ApplyTreeFilter()
+    {
+        string filter = txtTreeFilter.Text.Trim();
+
+        if (string.IsNullOrEmpty(filter))
+        {
+            // Restore all nodes if filter cleared
+            if (_allTreeNodes != null)
+            {
+                RestoreAllNodes();
+                _allTreeNodes = null;
+            }
+            lblTreeFilterCount.Text = "";
+            return;
+        }
+
+        // On first filter, snapshot all nodes
+        if (_allTreeNodes == null)
+        {
+            _allTreeNodes = SnapshotNodes();
+        }
+
+        // Rebuild tree showing only matching nodes and their ancestors
+        treeView.BeginUpdate();
+        treeView.Nodes.Clear();
+
+        int matchCount = 0;
+        foreach (var rootSnapshot in _allTreeNodes)
+        {
+            var filtered = FilterNode(rootSnapshot, filter, ref matchCount);
+            if (filtered != null)
+            {
+                treeView.Nodes.Add(filtered);
+            }
+        }
+        treeView.ExpandAll();
+        treeView.EndUpdate();
+
+        lblTreeFilterCount.Text = $"{matchCount} found";
+    }
+
+    private List<TreeNode> SnapshotNodes()
+    {
+        var result = new List<TreeNode>();
+        foreach (TreeNode node in treeView.Nodes)
+        {
+            result.Add(CloneNode(node));
+        }
+        return result;
+    }
+
+    private static TreeNode CloneNode(TreeNode source)
+    {
+        var clone = new TreeNode(source.Text) { Tag = source.Tag };
+        foreach (TreeNode child in source.Nodes)
+        {
+            clone.Nodes.Add(CloneNode(child));
+        }
+        return clone;
+    }
+
+    private void RestoreAllNodes()
+    {
+        if (_allTreeNodes == null) return;
+        treeView.BeginUpdate();
+        treeView.Nodes.Clear();
+        foreach (var node in _allTreeNodes)
+        {
+            treeView.Nodes.Add(CloneNode(node));
+        }
+        // Expand root nodes
+        foreach (TreeNode node in treeView.Nodes)
+        {
+            node.Expand();
+        }
+        treeView.EndUpdate();
+    }
+
+    private static TreeNode? FilterNode(TreeNode source, string filter, ref int matchCount)
+    {
+        bool selfMatches = source.Text.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+        // Check children
+        var matchedChildren = new List<TreeNode>();
+        foreach (TreeNode child in source.Nodes)
+        {
+            var filtered = FilterNode(child, filter, ref matchCount);
+            if (filtered != null)
+                matchedChildren.Add(filtered);
+        }
+
+        if (selfMatches)
+        {
+            matchCount++;
+            // Include this node with all its original children
+            var result = new TreeNode(source.Text) { Tag = source.Tag };
+            foreach (TreeNode child in source.Nodes)
+            {
+                result.Nodes.Add(CloneNode(child));
+            }
+            return result;
+        }
+
+        if (matchedChildren.Count > 0)
+        {
+            // Include this node as ancestor with only matched children
+            var result = new TreeNode(source.Text) { Tag = source.Tag };
+            foreach (var child in matchedChildren)
+            {
+                result.Nodes.Add(child);
+            }
+            return result;
+        }
+
+        return null;
     }
 
     private void LoadRARFile(string filePath)
     {
         using var fs = File.OpenRead(filePath);
-        using var reader = new BinaryReader(fs);
 
         var rootNode = treeView.Nodes.Add("RAR Archive");
         rootNode.Tag = filePath;
 
-        bool isRar5 = RAR5HeaderReader.IsRAR5(fs);
-        fs.Position = 0;
+        var detailedBlocks = RARDetailedParser.Parse(fs);
 
-        if (isRar5)
+        int fileCount = 0;
+        for (int i = 0; i < detailedBlocks.Count; i++)
         {
-            LoadRAR5File(fs, rootNode);
-        }
-        else
-        {
-            LoadRAR4File(reader, rootNode);
-        }
-
-        rootNode.Expand();
-    }
-
-    private void LoadRAR4File(BinaryReader reader, TreeNode rootNode)
-    {
-        var headerReader = new RARHeaderReader(reader);
-        int blockIndex = 0;
-
-        while (headerReader.CanReadBaseHeader)
-        {
-            var block = headerReader.ReadBlock(parseContents: true);
-            if (block == null) break;
-
-            // Build block label
-            string blockName = GetBlockTypeName(block.BlockType);
-            string blockLabel = $"[{blockIndex}] {blockName}";
-
-            // Add sub-type info for service blocks
-            if (block.ServiceBlockInfo != null)
-            {
-                blockLabel = $"[{blockIndex}] {blockName} ({block.ServiceBlockInfo.SubType})";
-            }
-            else if (block.FileHeader != null)
-            {
-                blockLabel = $"[{blockIndex}] {blockName}: {block.FileHeader.FileName}";
-            }
+            var block = detailedBlocks[i];
+            string blockLabel = $"[{i}] {block.BlockType}";
+            if (!string.IsNullOrEmpty(block.ItemName))
+                blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
 
             var blockNode = rootNode.Nodes.Add(blockLabel);
             blockNode.Tag = block;
-            blockIndex++;
 
-            // Extract and store comment if present (will be shown when block is selected)
-            if (block.ServiceBlockInfo != null && block.ServiceBlockInfo.SubType == "CMT")
-            {
-                var commentData = headerReader.ReadServiceBlockData(block);
-                if (commentData != null)
-                {
-                    block.ServiceBlockInfo.CommentText = block.ServiceBlockInfo.IsStored
-                        ? System.Text.Encoding.UTF8.GetString(commentData).TrimEnd('\0')
-                        : RARLib.Decompression.RARDecompressor.DecompressComment(
-                            commentData,
-                            (int)block.ServiceBlockInfo.UnpackedSize,
-                            block.ServiceBlockInfo.CompressionMethod,
-                            isRAR5: false);
-                }
-            }
-
-            headerReader.SkipBlock(block, includeData: block.BlockType != RAR4BlockType.FileHeader);
+            if (block.BlockType.Contains("File"))
+                fileCount++;
         }
 
-        rootNode.Text = $"RAR Archive ({blockIndex} blocks)";
+        rootNode.Text = $"RAR Archive ({detailedBlocks.Count} blocks, {fileCount} files)";
+        rootNode.Expand();
     }
 
-    private static string GetBlockTypeName(RAR4BlockType blockType)
-    {
-        return blockType switch
-        {
-            RAR4BlockType.Marker => "Marker",
-            RAR4BlockType.ArchiveHeader => "Archive Header",
-            RAR4BlockType.FileHeader => "File Header",
-            RAR4BlockType.Comment => "Comment (Old)",
-            RAR4BlockType.AuthInfo => "Auth Info",
-            RAR4BlockType.OldService => "Old Service",
-            RAR4BlockType.Protect => "Protection/Recovery",
-            RAR4BlockType.Sign => "Signature",
-            RAR4BlockType.Service => "Service Block",
-            RAR4BlockType.EndArchive => "End Archive",
-            _ => $"Unknown (0x{(byte)blockType:X2})"
-        };
-    }
-
-    private void LoadRAR5File(Stream stream, TreeNode rootNode)
-    {
-        stream.Seek(8, SeekOrigin.Begin);
-
-        var headerReader = new RAR5HeaderReader(stream);
-        var archiveNode = rootNode.Nodes.Add("Archive Info (RAR5)");
-        var filesNode = rootNode.Nodes.Add("Files");
-
-        var fileInfos = new List<RAR5FileInfo>();
-
-        while (headerReader.CanReadBaseHeader)
-        {
-            var block = headerReader.ReadBlock();
-            if (block == null) break;
-
-            if (block.ArchiveInfo != null)
-            {
-                AddRAR5ArchiveInfoToList(block.ArchiveInfo);
-            }
-
-            if (block.FileInfo != null)
-            {
-                fileInfos.Add(block.FileInfo);
-                var fileNode = filesNode.Nodes.Add(block.FileInfo.FileName);
-                fileNode.Tag = block.FileInfo;
-            }
-
-            // Extract and store comment if present (will be shown when block is selected)
-            if (block.ServiceBlockInfo != null && block.ServiceBlockInfo.SubType == "CMT")
-            {
-                var commentData = headerReader.ReadServiceBlockData(block);
-                if (commentData != null)
-                {
-                    block.ServiceBlockInfo.CommentText = block.ServiceBlockInfo.IsStored
-                        ? System.Text.Encoding.UTF8.GetString(commentData).TrimEnd('\0')
-                        : RARLib.Decompression.RARDecompressor.DecompressComment(
-                            commentData,
-                            (int)block.ServiceBlockInfo.UnpackedSize,
-                            (byte)(block.ServiceBlockInfo.CompressionMethod == 0 ? 0x30 : 0x30 + block.ServiceBlockInfo.CompressionMethod),
-                            isRAR5: true);
-                }
-            }
-
-            headerReader.SkipBlock(block);
-        }
-
-        filesNode.Text = $"Files ({fileInfos.Count})";
-        filesNode.Expand();
-    }
 
     private void LoadSRRFile(string filePath)
     {
@@ -211,7 +249,7 @@ public partial class FileInspectorForm : Form
         var srr = srrData.SrrFile;
 
         var rootNode = treeView.Nodes.Add("SRR File");
-        rootNode.Tag = srr;
+        rootNode.Tag = "root"; // Use string tag to identify root node
 
         if (srr.HeaderBlock != null)
         {
@@ -297,7 +335,6 @@ public partial class FileInspectorForm : Form
             }
         }
 
-        SetComment(srr.ArchiveComment);
         rootNode.Expand();
     }
 
@@ -319,30 +356,11 @@ public partial class FileInspectorForm : Form
         AddListItem("Encrypted Headers", header.HasEncryptedHeaders ? "Yes" : "No");
     }
 
-    private void AddRAR5ArchiveInfoToList(RAR5ArchiveInfo info)
-    {
-        listView.Items.Clear();
-        AddListItem("Format", "RAR 5.0");
-        AddListItem("Archive Flags (Raw)", $"0x{info.ArchiveFlags:X}");
-        AddListItem("Volume", info.IsVolume ? "Yes" : "No");
-        AddListItem("Has Volume Number", info.HasVolumeNumber ? "Yes" : "No");
-        if (info.VolumeNumber.HasValue)
-            AddListItem("Volume Number", info.VolumeNumber.Value.ToString());
-        AddListItem("Solid", info.IsSolid ? "Yes" : "No");
-        AddListItem("Recovery Record", info.HasRecoveryRecord ? "Yes" : "No");
-        AddListItem("Locked", info.IsLocked ? "Yes" : "No");
-    }
 
     private void AddSRRInfoToList(SRRFile srr)
     {
         listView.Items.Clear();
-        txtComment.Clear();
 
-        // Show archive comment if present for SRR files
-        if (!string.IsNullOrEmpty(srr.ArchiveComment))
-        {
-            SetComment(srr.ArchiveComment);
-        }
 
         AddListItem("RAR Version", srr.RARVersion.HasValue ? (srr.RARVersion == 50 ? "RAR 5.0" : $"RAR {srr.RARVersion.Value / 10}.{srr.RARVersion.Value % 10}") : "Unknown");
 
@@ -397,19 +415,12 @@ public partial class FileInspectorForm : Form
     {
         var item = new ListViewItem(property);
         item.SubItems.Add(value);
-        listView.Items.Add(item);
-    }
-
-    private void SetComment(string? comment)
-    {
-        if (string.IsNullOrEmpty(comment))
+        // Tint rows that have hex offset mappings so user knows they're clickable
+        if (_propertyOffsets.ContainsKey(property))
         {
-            txtComment.Clear();
-            return;
+            item.BackColor = PropertyHasOffsetColor;
         }
-
-        comment = comment.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
-        txtComment.Text = comment;
+        listView.Items.Add(item);
     }
 
     private static string FormatSize(long bytes)
@@ -427,189 +438,84 @@ public partial class FileInspectorForm : Form
 
     private void treeView_AfterSelect(object sender, TreeViewEventArgs e)
     {
-        if (e.Node?.Tag is RARBlockReadResult blockResult)
+        _propertyOffsets.Clear();
+        _currentDetailedBlock = null;
+
+        if (e.Node?.Tag is RARDetailedBlock detailedBlock)
         {
-            ShowBlockDetails(blockResult);
-        }
-        else if (e.Node?.Tag is RARFileHeader fileHeader)
-        {
-            ShowFileHeaderDetails(fileHeader);
-        }
-        else if (e.Node?.Tag is RAR5FileInfo fileInfo)
-        {
-            ShowRAR5FileDetails(fileInfo);
+            _currentDetailedBlock = detailedBlock;
+            ShowDetailedBlockInfo(detailedBlock);
+            HighlightBlockInHexView(detailedBlock.StartOffset, (int)detailedBlock.TotalSize);
         }
         else if (e.Node?.Tag is SrrHeaderBlock srrHeader)
         {
             ShowSrrHeaderBlockDetails(srrHeader);
+            HighlightBlockInHexView(srrHeader.BlockPosition, srrHeader.HeaderSize);
         }
         else if (e.Node?.Tag is SrrOsoHashBlock osoHash)
         {
             ShowOsoHashBlockDetails(osoHash);
+            HighlightBlockInHexView(osoHash.BlockPosition, osoHash.HeaderSize);
         }
         else if (e.Node?.Tag is SrrRarPaddingBlock rarPadding)
         {
             ShowRarPaddingBlockDetails(rarPadding);
+            HighlightBlockInHexView(rarPadding.BlockPosition, rarPadding.HeaderSize + rarPadding.AddSize);
         }
         else if (e.Node?.Tag is SrrStoredFileBlock storedFile)
         {
             ShowStoredFileDetails(storedFile);
+            HighlightBlockInHexView(storedFile.BlockPosition, storedFile.HeaderSize + storedFile.AddSize);
         }
         else if (e.Node?.Tag is SrrRarFileBlock rarFile)
         {
             ShowRarFileBlockDetails(rarFile);
-        }
-        else if (e.Node?.Tag is RARDetailedBlock detailedBlock)
-        {
-            ShowDetailedBlockInfo(detailedBlock);
+            HighlightBlockInHexView(rarFile.BlockPosition, rarFile.HeaderSize + rarFile.AddSize);
         }
         else if (e.Node?.Tag is SRRFile srr)
         {
+            // Only show info for "RAR Archive Info" node, not for root "SRR File" node
             AddSRRInfoToList(srr);
+            hexView.ShowFullFile();
+        }
+        else if (e.Node?.Tag is string tagStr && tagStr == "root")
+        {
+            // Root "SRR File" node - just clear and show nothing
+            listView.Items.Clear();
+    
+            hexView.ShowFullFile();
+        }
+        else
+        {
+            // Unknown or container node - clear the view
+            listView.Items.Clear();
+            hexView.ShowFullFile();
         }
     }
 
-    private void ShowBlockDetails(RARBlockReadResult block)
+    private void HighlightBlockInHexView(long offset, long size)
     {
-        listView.Items.Clear();
-        txtComment.Clear();
+        if (_fileBytes == null) return;
+        hexView.LoadBlockData(offset, (int)Math.Min(size, int.MaxValue));
+    }
 
-        // Common block info
-        AddListItem("Block Type", $"0x{(byte)block.BlockType:X2} ({GetBlockTypeName(block.BlockType)})");
-        AddListItem("Block Position", $"0x{block.BlockPosition:X}");
-        AddListItem("Header CRC", $"0x{block.HeaderCrc:X4}");
-        AddListItem("CRC Valid", block.CrcValid ? "Yes" : "No");
-        AddListItem("Header Size", $"{block.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{block.Flags:X4}");
-        AddListItem("Add Size", $"{block.AddSize} bytes");
-        AddListItem("Total Size", $"{block.HeaderSize + block.AddSize} bytes");
-
-        // Archive header details
-        if (block.ArchiveHeader != null)
+    private void listView_SelectedIndexChanged(object sender, EventArgs e)
+    {
+        if (listView.SelectedItems.Count > 0)
         {
-            AddListItem("", "--- Archive Header ---");
-            AddListItem("Volume", block.ArchiveHeader.IsVolume ? "Yes" : "No");
-            AddListItem("Solid", block.ArchiveHeader.IsSolid ? "Yes" : "No");
-            AddListItem("Recovery Record", block.ArchiveHeader.HasRecoveryRecord ? "Yes" : "No");
-            AddListItem("Locked", block.ArchiveHeader.IsLocked ? "Yes" : "No");
-            AddListItem("First Volume", block.ArchiveHeader.IsFirstVolume ? "Yes" : "No");
-            AddListItem("New Volume Naming", block.ArchiveHeader.HasNewVolumeNaming ? "Yes" : "No");
-            AddListItem("Encrypted Headers", block.ArchiveHeader.HasEncryptedHeaders ? "Yes" : "No");
-        }
+            var item = listView.SelectedItems[0];
+            string propertyName = item.Text;
 
-        // File header details
-        if (block.FileHeader != null)
-        {
-            AddListItem("", "--- File Header ---");
-            AddListItem("File Name", block.FileHeader.FileName);
-            AddListItem("Type", block.FileHeader.IsDirectory ? "Directory" : "File");
-            AddListItem("Unpacked Size", $"{block.FileHeader.UnpackedSize:N0} bytes");
-            AddListItem("Packed Size", $"{block.FileHeader.PackedSize:N0} bytes");
-            AddListItem("Host OS", GetHostOSName(block.FileHeader.HostOS));
-            AddListItem("File CRC32", $"0x{block.FileHeader.FileCrc:X8}");
-            AddListItem("Compression Method", GetCompressionMethodName(block.FileHeader.CompressionMethod));
-            AddListItem("Dictionary Size", $"{block.FileHeader.DictionarySizeKB} KB");
-            AddListItem("Unpack Version", $"{block.FileHeader.UnpackVersion / 10}.{block.FileHeader.UnpackVersion % 10}");
-        }
-
-        // Service block details (CMT, RR, etc.)
-        if (block.ServiceBlockInfo != null)
-        {
-            var svc = block.ServiceBlockInfo;
-            AddListItem("", "--- Service Block ---");
-            AddListItem("Sub-Type", svc.SubType);
-            AddListItem("Packed Size", $"{svc.PackedSize:N0} bytes");
-            AddListItem("Unpacked Size", $"{svc.UnpackedSize:N0} bytes");
-            AddListItem("Compression Method", $"0x{svc.CompressionMethod:X2} ({GetCompressionMethodName(svc.CompressionMethod)})");
-            AddListItem("Host OS", $"{svc.HostOS} ({GetHostOSName(svc.HostOS)})");
-            AddListItem("Data CRC", $"0x{svc.DataCrc:X8}");
-            AddListItem("File Time (DOS)", $"0x{svc.FileTimeDOS:X8}");
-            AddListItem("File Time (Parsed)", svc.FileTimeDOS == 0 ? "(not set)" : RARUtils.DosDateToDateTime(svc.FileTimeDOS)?.ToString("yyyy-MM-dd HH:mm:ss") ?? "(invalid)");
-            AddListItem("File Attributes", $"0x{svc.FileAttributes:X8}");
-            AddListItem("Unpack Version", $"{svc.UnpackVersion / 10}.{svc.UnpackVersion % 10}");
-            AddListItem("Is Stored", svc.IsStored ? "Yes" : "No");
-
-            // Timestamp precision info
-            AddListItem("", "--- Timestamp Precision ---");
-            AddListItem("Mtime Precision", GetPrecisionName(svc.MtimePrecision));
-            AddListItem("Ctime Precision", GetPrecisionName(svc.CtimePrecision));
-            AddListItem("Atime Precision", GetPrecisionName(svc.AtimePrecision));
-
-            // Decode flags for service blocks
-            var flags = (RARFileFlags)block.Flags;
-            AddListItem("", "--- Decoded Flags ---");
-            AddListItem("Has Extended Time", (flags & RARFileFlags.ExtTime) != 0 ? "Yes" : "No");
-            AddListItem("Dictionary Index", $"{((block.Flags & 0xE0) >> 5)} ({RARUtils.GetDictionarySize(flags)} KB)");
-
-            // Show comment text if this is a CMT block
-            if (svc.SubType == "CMT" && !string.IsNullOrEmpty(svc.CommentText))
+            if (_propertyOffsets.TryGetValue(propertyName, out var range))
             {
-                SetComment(svc.CommentText);
+                hexView.SelectRange(range.Offset, range.Length);
+            }
+            else
+            {
+                hexView.ClearSelection();
             }
         }
-    }
-
-    private static string GetPrecisionName(TimestampPrecision precision)
-    {
-        return precision switch
-        {
-            TimestampPrecision.NotSaved => "Not Saved (-ts-)",
-            TimestampPrecision.OneSecond => "1 Second (DOS)",
-            TimestampPrecision.HighPrecision1 => "High Precision 1",
-            TimestampPrecision.HighPrecision2 => "High Precision 2",
-            TimestampPrecision.NtfsPrecision => "NTFS (100ns)",
-            _ => $"Unknown ({precision})"
-        };
-    }
-
-    private void ShowFileHeaderDetails(RARFileHeader header)
-    {
-        listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("File Name", header.FileName);
-        AddListItem("Type", header.IsDirectory ? "Directory" : "File");
-        AddListItem("Block Position", $"0x{header.BlockPosition:X}");
-        AddListItem("Header CRC", $"0x{header.HeaderCrc:X4}");
-        AddListItem("Header Size", $"{header.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{(ushort)header.Flags:X4}");
-        AddListItem("CRC Valid", header.CrcValid ? "Yes" : "No");
-        AddListItem("Unpacked Size", $"{header.UnpackedSize:N0} bytes ({FormatSize((long)header.UnpackedSize)})");
-        AddListItem("Packed Size", $"{header.PackedSize:N0} bytes ({FormatSize((long)header.PackedSize)})");
-        AddListItem("File CRC32", header.FileCrc.ToString("X8"));
-        AddListItem("Host OS", GetHostOSName(header.HostOS));
-        AddListItem("Unpack Version", $"{header.UnpackVersion / 10}.{header.UnpackVersion % 10}");
-        AddListItem("Compression Method", GetCompressionMethodName(header.CompressionMethod));
-        AddListItem("Dictionary Size", $"{header.DictionarySizeKB} KB");
-        AddListItem("File Attributes", $"0x{header.FileAttributes:X8}");
-        if (header.ModifiedTime.HasValue)
-            AddListItem("Modified Time", header.ModifiedTime.Value.ToString("yyyy-MM-dd HH:mm:ss"));
-        if (header.CreationTime.HasValue)
-            AddListItem("Creation Time", header.CreationTime.Value.ToString("yyyy-MM-dd HH:mm:ss"));
-        if (header.AccessTime.HasValue)
-            AddListItem("Access Time", header.AccessTime.Value.ToString("yyyy-MM-dd HH:mm:ss"));
-        AddListItem("Split Before", header.IsSplitBefore ? "Yes" : "No");
-        AddListItem("Split After", header.IsSplitAfter ? "Yes" : "No");
-        AddListItem("Encrypted", header.IsEncrypted ? "Yes" : "No");
-        AddListItem("Unicode Name", header.HasUnicodeName ? "Yes" : "No");
-        AddListItem("Extended Time", header.HasExtendedTime ? "Yes" : "No");
-        AddListItem("Large File (64-bit)", header.HasLargeSize ? "Yes" : "No");
-    }
-
-    private static string GetHostOSName(byte hostOS)
-    {
-        return hostOS switch
-        {
-            0 => "MS-DOS",
-            1 => "OS/2",
-            2 => "Windows",
-            3 => "Unix",
-            4 => "Mac OS",
-            5 => "BeOS",
-            _ => $"Unknown ({hostOS})"
-        };
-    }
-
-    private static string GetCompressionMethodName(byte method)
+    }    private static string GetCompressionMethodName(byte method)
     {
         return method switch
         {
@@ -623,94 +529,103 @@ public partial class FileInspectorForm : Form
         };
     }
 
-    private void ShowRAR5FileDetails(RAR5FileInfo info)
-    {
-        listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("File Name", info.FileName);
-        AddListItem("Type", info.IsDirectory ? "Directory" : "File");
-        AddListItem("File Flags (Raw)", $"0x{info.FileFlags:X}");
-        AddListItem("Unpacked Size", $"{info.UnpackedSize:N0} bytes ({FormatSize((long)info.UnpackedSize)})");
-        AddListItem("File Attributes", $"0x{info.Attributes:X}");
-        if (info.FileCrc.HasValue)
-            AddListItem("File CRC32", info.FileCrc.Value.ToString("X8"));
-        AddListItem("Compression Info (Raw)", $"0x{info.CompressionInfo:X}");
-        AddListItem("Compression Method", info.IsStored ? "Store (0)" : $"Method {info.CompressionMethod}");
-        AddListItem("Dict Size Power", info.DictSizePower.ToString());
-        AddListItem("Dictionary Size", $"{info.DictionarySizeKB} KB");
-        AddListItem("Host OS", GetRAR5HostOSName(info.HostOS));
-        if (info.ModificationTime.HasValue)
-        {
-            var dt = DateTimeOffset.FromUnixTimeSeconds(info.ModificationTime.Value).LocalDateTime;
-            AddListItem("Modification Time", dt.ToString("yyyy-MM-dd HH:mm:ss"));
-            AddListItem("Modification Time (Unix)", info.ModificationTime.Value.ToString());
-        }
-        AddListItem("Split Before", info.IsSplitBefore ? "Yes" : "No");
-        AddListItem("Split After", info.IsSplitAfter ? "Yes" : "No");
-    }
-
-    private static string GetRAR5HostOSName(ulong hostOS)
-    {
-        return hostOS switch
-        {
-            0 => "Windows",
-            1 => "Unix",
-            _ => $"Unknown ({hostOS})"
-        };
-    }
-
     private void ShowStoredFileDetails(SrrStoredFileBlock stored)
     {
         listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("File Name", stored.FileName);
-        AddListItem("Block Type", $"0x{(byte)stored.BlockType:X2} ({stored.BlockType})");
-        AddListItem("Block Position", $"0x{stored.BlockPosition:X}");
+
+        _propertyOffsets.Clear();
+
+        long pos = stored.BlockPosition;
+        long p = pos;
+
+        // Fields in byte order: CRC(0), Type(2), Flags(3), Size(5), AddSize(7), NameLen(11), FileName(13)
+        _propertyOffsets["Header CRC"] = new ByteRange { Offset = p, Length = 2 };
         AddListItem("Header CRC", $"0x{stored.Crc:X4}");
+        _propertyOffsets["Block Type"] = new ByteRange { Offset = p + 2, Length = 1 };
+        AddListItem("Block Type", $"0x{(byte)stored.BlockType:X2} ({stored.BlockType})");
+        _propertyOffsets["Flags"] = new ByteRange { Offset = p + 3, Length = 2 };
+        AddListItem("Flags", $"0x{stored.Flags:X4}");
+        _propertyOffsets["Header Size"] = new ByteRange { Offset = p + 5, Length = 2 };
         AddListItem("Header Size", $"{stored.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{stored.Flags:X4}");
+        p += 7;
+
+        // StoredFile always has AddSize (file data length)
+        _propertyOffsets["Add Size"] = new ByteRange { Offset = p, Length = 4 };
         AddListItem("Add Size", $"{stored.AddSize} bytes");
-        AddListItem("File Length", $"{stored.FileLength:N0} bytes ({FormatSize(stored.FileLength)})");
-        AddListItem("Data Offset", $"0x{stored.DataOffset:X}");
+        p += 4;
+
+        int nameLen = Encoding.UTF8.GetByteCount(stored.FileName);
+        _propertyOffsets["Name Length"] = new ByteRange { Offset = p, Length = 2 };
+        AddListItem("Name Length", $"{nameLen} bytes");
+        p += 2;
+        _propertyOffsets["File Name"] = new ByteRange { Offset = p, Length = nameLen };
+        AddListItem("File Name", stored.FileName);
+
+        // Stored file data follows the header
+        if (stored.FileLength > 0)
+        {
+            _propertyOffsets["File Data"] = new ByteRange { Offset = stored.DataOffset, Length = (int)Math.Min(stored.FileLength, int.MaxValue) };
+            AddListItem("File Data", $"{stored.FileLength:N0} bytes ({FormatSize(stored.FileLength)})");
+        }
     }
 
     private void ShowRarFileBlockDetails(SrrRarFileBlock rar)
     {
         listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("RAR Volume", rar.FileName);
-        AddListItem("Block Type", $"0x{(byte)rar.BlockType:X2} ({rar.BlockType})");
-        AddListItem("Block Position", $"0x{rar.BlockPosition:X}");
+
+        _propertyOffsets.Clear();
+
+        long p = rar.BlockPosition;
+
+        // Fields in byte order: CRC(0), Type(2), Flags(3), Size(5), [AddSize(7)], NameLen, RarFileName
+        _propertyOffsets["Header CRC"] = new ByteRange { Offset = p, Length = 2 };
         AddListItem("Header CRC", $"0x{rar.Crc:X4}");
+        _propertyOffsets["Block Type"] = new ByteRange { Offset = p + 2, Length = 1 };
+        AddListItem("Block Type", $"0x{(byte)rar.BlockType:X2} ({rar.BlockType})");
+        _propertyOffsets["Flags"] = new ByteRange { Offset = p + 3, Length = 2 };
+        AddListItem("Flags", $"0x{rar.Flags:X4}");
+        _propertyOffsets["Header Size"] = new ByteRange { Offset = p + 5, Length = 2 };
         AddListItem("Header Size", $"{rar.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{rar.Flags:X4}");
-        AddListItem("Add Size", $"{rar.AddSize} bytes");
+        p += 7;
+
+        if ((rar.Flags & (ushort)SRRBlockFlags.LongBlock) != 0)
+        {
+            _propertyOffsets["Add Size"] = new ByteRange { Offset = p, Length = 4 };
+            AddListItem("Add Size", $"{rar.AddSize} bytes");
+            p += 4;
+        }
+
+        int nameLen = Encoding.UTF8.GetByteCount(rar.FileName);
+        _propertyOffsets["Name Length"] = new ByteRange { Offset = p, Length = 2 };
+        AddListItem("Name Length", $"{nameLen} bytes");
+        p += 2;
+        _propertyOffsets["RAR Volume"] = new ByteRange { Offset = p, Length = nameLen };
+        AddListItem("RAR Volume", rar.FileName);
     }
 
     private void ShowDetailedBlockInfo(RARDetailedBlock block)
     {
         listView.Items.Clear();
-        txtComment.Clear();
 
-        // Block summary
-        AddListItem("Block Type", block.BlockType);
-        AddListItem("Start Offset", $"0x{block.StartOffset:X}");
-        AddListItem("Header Size", $"{block.HeaderSize} bytes");
-        AddListItem("Total Size", $"{block.TotalSize:N0} bytes");
-        if (block.HasData)
-            AddListItem("Data Size", $"{block.DataSize:N0} bytes");
-        if (!string.IsNullOrEmpty(block.ItemName))
-            AddListItem("Item Name", block.ItemName);
+        _propertyOffsets.Clear();
 
-        // Separator
-        AddListItem("", "--- Fields ---");
-
-        // All fields with offset, value, and description
+        // All fields in byte order
         foreach (var field in block.Fields)
         {
             string value = field.Value;
             if (!string.IsNullOrEmpty(field.Description) && field.Description != field.Value)
                 value = $"{field.Value} ({field.Description})";
+
+            // Store offset for hex view highlighting before AddListItem so tinting works
+            if (field.Length > 0)
+            {
+                _propertyOffsets[field.Name] = new ByteRange
+                {
+                    PropertyName = field.Name,
+                    Offset = field.Offset,
+                    Length = field.Length
+                };
+            }
 
             AddListItem(field.Name, value);
 
@@ -725,42 +640,99 @@ public partial class FileInspectorForm : Form
     private void ShowSrrHeaderBlockDetails(SrrHeaderBlock header)
     {
         listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("Block Type", $"0x{(byte)header.BlockType:X2} ({header.BlockType})");
-        AddListItem("Block Position", $"0x{header.BlockPosition:X}");
+
+        _propertyOffsets.Clear();
+
+        long pos = header.BlockPosition;
+
+        // Fields in byte order: CRC(0), Type(2), Flags(3), Size(5), [AppNameLen+AppName(7)]
+        _propertyOffsets["Header CRC"] = new ByteRange { Offset = pos, Length = 2 };
         AddListItem("Header CRC", $"0x{header.Crc:X4}");
+        _propertyOffsets["Block Type"] = new ByteRange { Offset = pos + 2, Length = 1 };
+        AddListItem("Block Type", $"0x{(byte)header.BlockType:X2} ({header.BlockType})");
+        _propertyOffsets["Flags"] = new ByteRange { Offset = pos + 3, Length = 2 };
+        AddListItem("Flags", $"0x{header.Flags:X4}");
+        _propertyOffsets["Header Size"] = new ByteRange { Offset = pos + 5, Length = 2 };
         AddListItem("Header Size", $"{header.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{header.Flags:X4}");
-        AddListItem("Has App Name", header.HasAppName ? "Yes" : "No");
         if (!string.IsNullOrEmpty(header.AppName))
+        {
+            _propertyOffsets["App Name"] = new ByteRange { Offset = pos + 7, Length = header.AppName.Length + 2 };
             AddListItem("App Name", header.AppName);
+        }
     }
 
     private void ShowOsoHashBlockDetails(SrrOsoHashBlock oso)
     {
         listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("File Name", oso.FileName);
-        AddListItem("Block Type", $"0x{(byte)oso.BlockType:X2} ({oso.BlockType})");
-        AddListItem("Block Position", $"0x{oso.BlockPosition:X}");
+
+        _propertyOffsets.Clear();
+
+        long p = oso.BlockPosition;
+
+        // Fields in byte order: CRC(0), Type(2), Flags(3), Size(5), [AddSize(7)], NameLen, Name, FileSize, OsoHash
+        _propertyOffsets["Header CRC"] = new ByteRange { Offset = p, Length = 2 };
         AddListItem("Header CRC", $"0x{oso.Crc:X4}");
+        _propertyOffsets["Block Type"] = new ByteRange { Offset = p + 2, Length = 1 };
+        AddListItem("Block Type", $"0x{(byte)oso.BlockType:X2} ({oso.BlockType})");
+        _propertyOffsets["Flags"] = new ByteRange { Offset = p + 3, Length = 2 };
+        AddListItem("Flags", $"0x{oso.Flags:X4}");
+        _propertyOffsets["Header Size"] = new ByteRange { Offset = p + 5, Length = 2 };
         AddListItem("Header Size", $"{oso.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{oso.Flags:X4}");
+        p += 7;
+
+        if ((oso.Flags & (ushort)SRRBlockFlags.LongBlock) != 0)
+        {
+            _propertyOffsets["Add Size"] = new ByteRange { Offset = p, Length = 4 };
+            AddListItem("Add Size", $"{oso.AddSize} bytes");
+            p += 4;
+        }
+
+        int nameLen = Encoding.UTF8.GetByteCount(oso.FileName);
+        _propertyOffsets["Name Length"] = new ByteRange { Offset = p, Length = 2 };
+        AddListItem("Name Length", $"{nameLen} bytes");
+        p += 2;
+        _propertyOffsets["File Name"] = new ByteRange { Offset = p, Length = nameLen };
+        AddListItem("File Name", oso.FileName);
+        p += nameLen;
+
+        _propertyOffsets["File Size"] = new ByteRange { Offset = p, Length = 8 };
         AddListItem("File Size", $"{oso.FileSize:N0} bytes ({FormatSize((long)oso.FileSize)})");
+        _propertyOffsets["OSO Hash"] = new ByteRange { Offset = p + 8, Length = 8 };
         AddListItem("OSO Hash", BitConverter.ToString(oso.OsoHash).Replace("-", ""));
     }
 
     private void ShowRarPaddingBlockDetails(SrrRarPaddingBlock padding)
     {
         listView.Items.Clear();
-        txtComment.Clear();
-        AddListItem("RAR File Name", padding.RarFileName);
-        AddListItem("Block Type", $"0x{(byte)padding.BlockType:X2} ({padding.BlockType})");
-        AddListItem("Block Position", $"0x{padding.BlockPosition:X}");
+
+        _propertyOffsets.Clear();
+
+        long p = padding.BlockPosition;
+
+        // Fields in byte order: CRC(0), Type(2), Flags(3), Size(5), [AddSize(7)], NameLen, RarFileName
+        _propertyOffsets["Header CRC"] = new ByteRange { Offset = p, Length = 2 };
         AddListItem("Header CRC", $"0x{padding.Crc:X4}");
+        _propertyOffsets["Block Type"] = new ByteRange { Offset = p + 2, Length = 1 };
+        AddListItem("Block Type", $"0x{(byte)padding.BlockType:X2} ({padding.BlockType})");
+        _propertyOffsets["Flags"] = new ByteRange { Offset = p + 3, Length = 2 };
+        AddListItem("Flags", $"0x{padding.Flags:X4}");
+        _propertyOffsets["Header Size"] = new ByteRange { Offset = p + 5, Length = 2 };
         AddListItem("Header Size", $"{padding.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{padding.Flags:X4}");
-        AddListItem("Add Size", $"{padding.AddSize} bytes");
+        p += 7;
+
+        if ((padding.Flags & (ushort)SRRBlockFlags.LongBlock) != 0)
+        {
+            _propertyOffsets["Add Size"] = new ByteRange { Offset = p, Length = 4 };
+            AddListItem("Add Size", $"{padding.AddSize} bytes");
+            p += 4;
+        }
+
+        int nameLen = Encoding.UTF8.GetByteCount(padding.RarFileName);
+        _propertyOffsets["Name Length"] = new ByteRange { Offset = p, Length = 2 };
+        AddListItem("Name Length", $"{nameLen} bytes");
+        p += 2;
+        _propertyOffsets["RAR File Name"] = new ByteRange { Offset = p, Length = nameLen };
+        AddListItem("RAR File Name", padding.RarFileName);
         AddListItem("Padding Size", $"{padding.PaddingSize:N0} bytes");
     }
 

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using WinRARRed.Controls;
 
 namespace WinRARRed.Forms;
 
@@ -25,16 +26,22 @@ partial class FileInspectorForm
         openToolStripMenuItem = new ToolStripMenuItem();
         toolStripSeparator1 = new ToolStripSeparator();
         exitToolStripMenuItem = new ToolStripMenuItem();
+        viewToolStripMenuItem = new ToolStripMenuItem();
+        showHexViewToolStripMenuItem = new ToolStripMenuItem();
         splitContainerMain = new SplitContainer();
+        treeFilterPanel = new Panel();
+        txtTreeFilter = new TextBox();
+        lblTreeFilter = new Label();
+        lblTreeFilterCount = new Label();
         treeView = new TreeView();
         contextMenuTree = new ContextMenuStrip();
         exportToolStripMenuItem = new ToolStripMenuItem();
-        splitContainerRight = new SplitContainer();
+        splitContainerVertical = new SplitContainer();
         listView = new ListView();
         columnProperty = new ColumnHeader();
         columnValue = new ColumnHeader();
-        groupBoxComment = new GroupBox();
-        txtComment = new TextBox();
+        groupBoxHex = new GroupBox();
+        hexView = new HexViewControl();
 
         menuStrip.SuspendLayout();
         contextMenuTree.SuspendLayout();
@@ -42,18 +49,18 @@ partial class FileInspectorForm
         splitContainerMain.Panel1.SuspendLayout();
         splitContainerMain.Panel2.SuspendLayout();
         splitContainerMain.SuspendLayout();
-        ((System.ComponentModel.ISupportInitialize)splitContainerRight).BeginInit();
-        splitContainerRight.Panel1.SuspendLayout();
-        splitContainerRight.Panel2.SuspendLayout();
-        splitContainerRight.SuspendLayout();
-        groupBoxComment.SuspendLayout();
+        ((System.ComponentModel.ISupportInitialize)splitContainerVertical).BeginInit();
+        splitContainerVertical.Panel1.SuspendLayout();
+        splitContainerVertical.Panel2.SuspendLayout();
+        splitContainerVertical.SuspendLayout();
+        groupBoxHex.SuspendLayout();
         SuspendLayout();
 
         // menuStrip
-        menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem });
+        menuStrip.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, viewToolStripMenuItem });
         menuStrip.Location = new Point(0, 0);
         menuStrip.Name = "menuStrip";
-        menuStrip.Size = new Size(900, 24);
+        menuStrip.Size = new Size(1000, 24);
         menuStrip.TabIndex = 0;
 
         // fileToolStripMenuItem
@@ -80,22 +87,77 @@ partial class FileInspectorForm
         exitToolStripMenuItem.Text = "E&xit";
         exitToolStripMenuItem.Click += exitToolStripMenuItem_Click;
 
+        // viewToolStripMenuItem
+        viewToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { showHexViewToolStripMenuItem });
+        viewToolStripMenuItem.Name = "viewToolStripMenuItem";
+        viewToolStripMenuItem.Size = new Size(44, 20);
+        viewToolStripMenuItem.Text = "&View";
+
+        // showHexViewToolStripMenuItem
+        showHexViewToolStripMenuItem.Checked = true;
+        showHexViewToolStripMenuItem.CheckOnClick = true;
+        showHexViewToolStripMenuItem.CheckState = CheckState.Checked;
+        showHexViewToolStripMenuItem.Name = "showHexViewToolStripMenuItem";
+        showHexViewToolStripMenuItem.ShortcutKeys = Keys.Control | Keys.H;
+        showHexViewToolStripMenuItem.Size = new Size(200, 22);
+        showHexViewToolStripMenuItem.Text = "Show &Hex View";
+        showHexViewToolStripMenuItem.Click += ShowHexViewToolStripMenuItem_Click;
+
         // splitContainerMain
         splitContainerMain.Dock = DockStyle.Fill;
         splitContainerMain.Location = new Point(0, 24);
         splitContainerMain.Name = "splitContainerMain";
         splitContainerMain.Panel1.Controls.Add(treeView);
-        splitContainerMain.Panel2.Controls.Add(splitContainerRight);
-        splitContainerMain.Size = new Size(900, 526);
+        splitContainerMain.Panel1.Controls.Add(treeFilterPanel);
+        splitContainerMain.Panel2.Controls.Add(splitContainerVertical);
+        splitContainerMain.Size = new Size(1000, 626);
         splitContainerMain.SplitterDistance = 280;
         splitContainerMain.TabIndex = 1;
+
+        // treeFilterPanel
+        treeFilterPanel.Controls.Add(txtTreeFilter);
+        treeFilterPanel.Controls.Add(lblTreeFilter);
+        treeFilterPanel.Controls.Add(lblTreeFilterCount);
+        treeFilterPanel.Dock = DockStyle.Top;
+        treeFilterPanel.Location = new Point(0, 0);
+        treeFilterPanel.Name = "treeFilterPanel";
+        treeFilterPanel.Padding = new Padding(4, 4, 4, 2);
+        treeFilterPanel.Size = new Size(280, 30);
+        treeFilterPanel.TabIndex = 1;
+
+        // lblTreeFilter
+        lblTreeFilter.AutoSize = true;
+        lblTreeFilter.Location = new Point(7, 8);
+        lblTreeFilter.Name = "lblTreeFilter";
+        lblTreeFilter.Size = new Size(33, 15);
+        lblTreeFilter.TabIndex = 0;
+        lblTreeFilter.Text = "Find:";
+
+        // txtTreeFilter
+        txtTreeFilter.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        txtTreeFilter.Location = new Point(44, 4);
+        txtTreeFilter.Name = "txtTreeFilter";
+        txtTreeFilter.Size = new Size(168, 23);
+        txtTreeFilter.TabIndex = 1;
+        txtTreeFilter.PlaceholderText = "Filter blocks...";
+        txtTreeFilter.TextChanged += TxtTreeFilter_TextChanged;
+
+        // lblTreeFilterCount
+        lblTreeFilterCount.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        lblTreeFilterCount.AutoSize = true;
+        lblTreeFilterCount.ForeColor = SystemColors.GrayText;
+        lblTreeFilterCount.Location = new Point(218, 8);
+        lblTreeFilterCount.Name = "lblTreeFilterCount";
+        lblTreeFilterCount.Size = new Size(55, 15);
+        lblTreeFilterCount.TabIndex = 2;
+        lblTreeFilterCount.Text = "";
 
         // treeView
         treeView.ContextMenuStrip = contextMenuTree;
         treeView.Dock = DockStyle.Fill;
-        treeView.Location = new Point(0, 0);
+        treeView.Location = new Point(0, 30);
         treeView.Name = "treeView";
-        treeView.Size = new Size(280, 526);
+        treeView.Size = new Size(280, 596);
         treeView.TabIndex = 0;
         treeView.AfterSelect += treeView_AfterSelect;
         treeView.NodeMouseClick += treeView_NodeMouseClick;
@@ -112,16 +174,16 @@ partial class FileInspectorForm
         exportToolStripMenuItem.Text = "Export...";
         exportToolStripMenuItem.Click += exportToolStripMenuItem_Click;
 
-        // splitContainerRight
-        splitContainerRight.Dock = DockStyle.Fill;
-        splitContainerRight.Location = new Point(0, 0);
-        splitContainerRight.Name = "splitContainerRight";
-        splitContainerRight.Orientation = Orientation.Horizontal;
-        splitContainerRight.Panel1.Controls.Add(listView);
-        splitContainerRight.Panel2.Controls.Add(groupBoxComment);
-        splitContainerRight.Size = new Size(616, 526);
-        splitContainerRight.SplitterDistance = 350;
-        splitContainerRight.TabIndex = 0;
+        // splitContainerVertical
+        splitContainerVertical.Dock = DockStyle.Fill;
+        splitContainerVertical.Location = new Point(0, 0);
+        splitContainerVertical.Name = "splitContainerVertical";
+        splitContainerVertical.Orientation = Orientation.Horizontal;
+        splitContainerVertical.Panel1.Controls.Add(listView);
+        splitContainerVertical.Panel2.Controls.Add(groupBoxHex);
+        splitContainerVertical.Size = new Size(716, 626);
+        splitContainerVertical.SplitterDistance = 350;
+        splitContainerVertical.TabIndex = 0;
 
         // listView
         listView.Columns.AddRange(new ColumnHeader[] { columnProperty, columnValue });
@@ -130,10 +192,11 @@ partial class FileInspectorForm
         listView.GridLines = true;
         listView.Location = new Point(0, 0);
         listView.Name = "listView";
-        listView.Size = new Size(616, 350);
+        listView.Size = new Size(716, 220);
         listView.TabIndex = 0;
         listView.UseCompatibleStateImageBehavior = false;
         listView.View = View.Details;
+        listView.SelectedIndexChanged += listView_SelectedIndexChanged;
 
         // columnProperty
         columnProperty.Text = "Property";
@@ -141,36 +204,31 @@ partial class FileInspectorForm
 
         // columnValue
         columnValue.Text = "Value";
-        columnValue.Width = 400;
+        columnValue.Width = 500;
 
-        // groupBoxComment
-        groupBoxComment.Controls.Add(txtComment);
-        groupBoxComment.Dock = DockStyle.Fill;
-        groupBoxComment.Location = new Point(0, 0);
-        groupBoxComment.Name = "groupBoxComment";
-        groupBoxComment.Padding = new Padding(6);
-        groupBoxComment.Size = new Size(616, 172);
-        groupBoxComment.TabIndex = 0;
-        groupBoxComment.TabStop = false;
-        groupBoxComment.Text = "Archive Comment";
+        // groupBoxHex
+        groupBoxHex.Controls.Add(hexView);
+        groupBoxHex.Dock = DockStyle.Fill;
+        groupBoxHex.Location = new Point(0, 0);
+        groupBoxHex.Name = "groupBoxHex";
+        groupBoxHex.Padding = new Padding(3);
+        groupBoxHex.Size = new Size(716, 272);
+        groupBoxHex.TabIndex = 0;
+        groupBoxHex.TabStop = false;
+        groupBoxHex.Text = "Hex View";
 
-        // txtComment
-        txtComment.Dock = DockStyle.Fill;
-        txtComment.Font = new Font("Consolas", 9F, FontStyle.Regular, GraphicsUnit.Point);
-        txtComment.Location = new Point(6, 22);
-        txtComment.Multiline = true;
-        txtComment.Name = "txtComment";
-        txtComment.ReadOnly = true;
-        txtComment.ScrollBars = ScrollBars.Both;
-        txtComment.Size = new Size(604, 144);
-        txtComment.TabIndex = 0;
-        txtComment.WordWrap = false;
+        // hexView
+        hexView.Dock = DockStyle.Fill;
+        hexView.Location = new Point(3, 19);
+        hexView.Name = "hexView";
+        hexView.Size = new Size(710, 250);
+        hexView.TabIndex = 0;
 
         // FileInspectorForm
         AllowDrop = true;
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(900, 550);
+        ClientSize = new Size(1000, 650);
         Controls.Add(splitContainerMain);
         Controls.Add(menuStrip);
         MainMenuStrip = menuStrip;
@@ -183,16 +241,17 @@ partial class FileInspectorForm
         menuStrip.ResumeLayout(false);
         menuStrip.PerformLayout();
         contextMenuTree.ResumeLayout(false);
+        treeFilterPanel.ResumeLayout(false);
+        treeFilterPanel.PerformLayout();
         splitContainerMain.Panel1.ResumeLayout(false);
         splitContainerMain.Panel2.ResumeLayout(false);
         ((System.ComponentModel.ISupportInitialize)splitContainerMain).EndInit();
         splitContainerMain.ResumeLayout(false);
-        splitContainerRight.Panel1.ResumeLayout(false);
-        splitContainerRight.Panel2.ResumeLayout(false);
-        ((System.ComponentModel.ISupportInitialize)splitContainerRight).EndInit();
-        splitContainerRight.ResumeLayout(false);
-        groupBoxComment.ResumeLayout(false);
-        groupBoxComment.PerformLayout();
+        splitContainerVertical.Panel1.ResumeLayout(false);
+        splitContainerVertical.Panel2.ResumeLayout(false);
+        ((System.ComponentModel.ISupportInitialize)splitContainerVertical).EndInit();
+        splitContainerVertical.ResumeLayout(false);
+        groupBoxHex.ResumeLayout(false);
         ResumeLayout(false);
         PerformLayout();
     }
@@ -204,14 +263,20 @@ partial class FileInspectorForm
     private ToolStripMenuItem openToolStripMenuItem;
     private ToolStripSeparator toolStripSeparator1;
     private ToolStripMenuItem exitToolStripMenuItem;
+    private ToolStripMenuItem viewToolStripMenuItem;
+    private ToolStripMenuItem showHexViewToolStripMenuItem;
     private SplitContainer splitContainerMain;
+    private Panel treeFilterPanel;
+    private TextBox txtTreeFilter;
+    private Label lblTreeFilter;
+    private Label lblTreeFilterCount;
     private TreeView treeView;
     private ContextMenuStrip contextMenuTree;
     private ToolStripMenuItem exportToolStripMenuItem;
-    private SplitContainer splitContainerRight;
+    private SplitContainer splitContainerVertical;
     private ListView listView;
     private ColumnHeader columnProperty;
     private ColumnHeader columnValue;
-    private GroupBox groupBoxComment;
-    private TextBox txtComment;
+    private GroupBox groupBoxHex;
+    private HexViewControl hexView;
 }

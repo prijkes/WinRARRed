@@ -38,6 +38,12 @@ public partial class MainForm : Form
     private const int LogFlushIntervalMs = 50;
     private const int MaxEntriesPerFlush = 100;
 
+    // Track whether tabs have unseen messages (for visual indicator)
+    private bool _phase1HasUnread;
+    private bool _phase2HasUnread;
+    private const string Phase1TabTitle = "Phase 1 (Comment)";
+    private const string Phase2TabTitle = "Phase 2 (Full RAR)";
+
     public MainForm()
     {
         InitializeComponent();
@@ -63,6 +69,7 @@ public partial class MainForm : Form
         btnTemporaryDirectoryBrowse.Click += BtnTemporaryDirectoryBrowse_Click;
         btnClearLog.Click += BtnClearLog_Click;
         btnStart.Click += BtnStart_Click;
+        tabControlLogs.SelectedIndexChanged += TabControlLogs_SelectedIndexChanged;
 
         FormClosing += MainForm_FormClosing;
     }
@@ -396,6 +403,10 @@ public partial class MainForm : Form
         rtbLogSystem.Clear();
         rtbLogPhase1.Clear();
         rtbLogPhase2.Clear();
+        _phase1HasUnread = false;
+        _phase2HasUnread = false;
+        tabPagePhase1.Text = Phase1TabTitle;
+        tabPagePhase2.Text = Phase2TabTitle;
         tabControlLogs.SelectedTab = tabPageSystem;
 
         btnStart.Text = "Stop";
@@ -486,6 +497,20 @@ public partial class MainForm : Form
             {
                 control.Enabled = enabled;
             }
+        }
+    }
+
+    private void TabControlLogs_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (tabControlLogs.SelectedTab == tabPagePhase1 && _phase1HasUnread)
+        {
+            _phase1HasUnread = false;
+            tabPagePhase1.Text = Phase1TabTitle;
+        }
+        else if (tabControlLogs.SelectedTab == tabPagePhase2 && _phase2HasUnread)
+        {
+            _phase2HasUnread = false;
+            tabPagePhase2.Text = Phase2TabTitle;
         }
     }
 
@@ -677,13 +702,19 @@ public partial class MainForm : Form
             {
                 FlushEntriesToRichTextBox(rtbLogPhase1, phase1Entries);
                 if (tabControlLogs.SelectedTab != tabPagePhase1)
-                    tabControlLogs.SelectedTab = tabPagePhase1;
+                {
+                    _phase1HasUnread = true;
+                    tabPagePhase1.Text = Phase1TabTitle + " *";
+                }
             }
             if (phase2Entries.Count > 0)
             {
                 FlushEntriesToRichTextBox(rtbLogPhase2, phase2Entries);
                 if (tabControlLogs.SelectedTab != tabPagePhase2)
-                    tabControlLogs.SelectedTab = tabPagePhase2;
+                {
+                    _phase2HasUnread = true;
+                    tabPagePhase2.Text = Phase2TabTitle + " *";
+                }
             }
         }
         catch (ObjectDisposedException)

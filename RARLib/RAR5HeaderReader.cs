@@ -106,11 +106,11 @@ public class RAR5FileInfo
     /// <summary>Compression method (0-5).</summary>
     public int CompressionMethod => (int)((CompressionInfo >> 7) & 0x07);
 
-    /// <summary>Dictionary size as power of 2.</summary>
-    public int DictSizePower => (int)((CompressionInfo >> 11) & 0x0F);
+    /// <summary>Dictionary size as power of 2 (bits 10-13 of CompInfo for RAR5).</summary>
+    public int DictSizePower => (int)((CompressionInfo >> 10) & 0x0F);
 
-    /// <summary>Dictionary size in KB.</summary>
-    public int DictionarySizeKB => DictSizePower > 0 ? (128 << DictSizePower) : 128;
+    /// <summary>Dictionary size in KB (base 128KB shifted by DictSizePower).</summary>
+    public int DictionarySizeKB => 128 << DictSizePower;
 
     /// <summary>True if file continues from previous volume.</summary>
     public bool IsSplitBefore { get; set; }
@@ -153,16 +153,18 @@ public class RAR5ServiceBlockInfo
 }
 
 /// <summary>
-/// RAR 5.0 header flags.
+/// RAR 5.0 common header flags (HFL_*) from unrar headers.hpp
 /// </summary>
 [Flags]
 public enum RAR5HeaderFlags : ulong
 {
-    ExtraArea = 0x0001,     // Extra area present
-    DataArea = 0x0002,      // Data area present
-    SkipIfUnknown = 0x0004, // Skip this header if unknown
-    PreviousVolume = 0x0008, // Data continued from previous volume
-    NextVolume = 0x0010     // Data continues in next volume
+    ExtraArea = 0x0001,      // HFL_EXTRA - Extra area present
+    DataArea = 0x0002,       // HFL_DATA - Data area present
+    SkipIfUnknown = 0x0004,  // HFL_SKIPIFUNKNOWN - Skip this header if unknown
+    SplitBefore = 0x0008,    // HFL_SPLITBEFORE - Data continued from previous volume
+    SplitAfter = 0x0010,     // HFL_SPLITAFTER - Data continues in next volume
+    Child = 0x0020,          // HFL_CHILD - Child of preceding file header
+    Inherited = 0x0040       // HFL_INHERITED - Preserve host modification
 }
 
 /// <summary>
@@ -325,8 +327,8 @@ public class RAR5HeaderReader(Stream stream)
         }
 
         // Set split flags from header flags
-        bool isSplitBefore = (flags & (ulong)RAR5HeaderFlags.PreviousVolume) != 0;
-        bool isSplitAfter = (flags & (ulong)RAR5HeaderFlags.NextVolume) != 0;
+        bool isSplitBefore = (flags & (ulong)RAR5HeaderFlags.SplitBefore) != 0;
+        bool isSplitAfter = (flags & (ulong)RAR5HeaderFlags.SplitAfter) != 0;
 
         // Parse type-specific content
         long headerEnd = headerContentStart + (long)headerSize;
@@ -384,7 +386,7 @@ public class RAR5HeaderReader(Stream stream)
         ulong compressionInfo = ReadVInt();
         info.CompressionVersion = (int)(compressionInfo & 0x3F);
         info.CompressionMethod = (int)((compressionInfo >> 7) & 0x07);
-        info.DictSize = (int)((compressionInfo >> 11) & 0x0F);
+        info.DictSize = (int)((compressionInfo >> 10) & 0x0F);
         info.IsStored = info.CompressionMethod == 0;
 
         // Skip host OS
