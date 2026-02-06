@@ -65,7 +65,7 @@ Outputs:
   - `input` (copied release files)
   - `output` (generated archives)
   - `logs` (per-attempt RAR output)
-- If a match is found, the matching archive is moved to the WinRAR versions root as `<ReleaseName>.rar`.
+- If a match is found, the matching archive is saved as `<ReleaseName>.rar` in the output folder.
 - App logs are written to `logs` next to the executable.
 - If "Delete RAR files" is disabled, `output` keeps the first volume of non-matching attempts.
 

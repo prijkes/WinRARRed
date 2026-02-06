@@ -159,6 +159,12 @@ public partial class Manager
         var allValidRarDirectories = GetValidRarDirectories(rarVersionDirectories, options);
         Log.Information(this, $"Found {allValidRarDirectories.Count} valid RAR versions matching configured version ranges");
 
+        // Validate input files before any brute-forcing
+        if (options.RAROptions.HasArchiveFileList && !ValidateInputFiles(options))
+        {
+            return false;
+        }
+
         // === PHASE 1: Comment Block Brute-Force ===
         // If CMT compressed data is available, first brute-force the comment to narrow down versions
         List<(string Path, int Version)> versionsToUse;
@@ -796,7 +802,7 @@ public partial class Manager
 
             string releaseName = Path.GetFileName(options.ReleaseDirectoryPath);
             string releaseRarFileName = $"{releaseName}.rar";
-            string releaseRarFilePath = Path.Combine(options.RARInstallationsDirectoryPath, releaseRarFileName);
+            string releaseRarFilePath = Path.Combine(options.OutputDirectoryPath, releaseRarFileName);
             if (!File.Exists(releaseRarFilePath))
             {
                 File.Move(actualRarFilePath, releaseRarFilePath);
@@ -999,7 +1005,7 @@ public partial class Manager
 
         if (missingFiles > 0)
         {
-            Log.Warning(this, $"Missing {missingFiles} SRR file entries on disk.");
+            throw new FileNotFoundException($"{missingFiles} file(s) from the SRR archive list are missing in the release directory.");
         }
     }
 
@@ -1037,6 +1043,62 @@ public partial class Manager
 
         relativePath = Path.GetRelativePath(basePath, fullPath);
         return !string.IsNullOrWhiteSpace(relativePath) && relativePath != ".";
+    }
+
+    /// <summary>
+    /// Validates that all required input files from the SRR exist in the release directory
+    /// and that their CRC32 values match. Runs before any brute-forcing begins.
+    /// </summary>
+    private bool ValidateInputFiles(BruteForceOptions options)
+    {
+        var opts = options.RAROptions;
+        string releaseDir = options.ReleaseDirectoryPath;
+
+        Log.Information(this, $"=== Validating Input Files ({opts.ArchiveFilePaths.Count} files, {opts.ArchiveDirectoryPaths.Count} directories) ===", LogTarget.System);
+
+        foreach (string file in opts.ArchiveFilePaths.OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        {
+            Log.Information(this, $"  Required: {file}", LogTarget.System);
+        }
+
+        List<string> missing = [];
+        List<string> crcMismatched = [];
+
+        foreach (string file in opts.ArchiveFilePaths)
+        {
+            string filePath = Path.Combine(releaseDir, file);
+            if (!File.Exists(filePath))
+            {
+                missing.Add(file);
+                Log.Error(this, $"  MISSING: {file}", LogTarget.System);
+                continue;
+            }
+
+            // Validate CRC if we have one for this file
+            if (opts.ArchiveFileCrcs.TryGetValue(file, out string? expectedCrc))
+            {
+                string actualCrc = CRC32.Calculate(filePath);
+                if (!string.Equals(actualCrc, expectedCrc, StringComparison.OrdinalIgnoreCase))
+                {
+                    crcMismatched.Add(file);
+                    Log.Error(this, $"  CRC MISMATCH: {file} (expected {expectedCrc}, got {actualCrc})", LogTarget.System);
+                }
+            }
+        }
+
+        if (missing.Count > 0 || crcMismatched.Count > 0)
+        {
+            string message = "";
+            if (missing.Count > 0)
+                message += $"{missing.Count} file(s) missing";
+            if (crcMismatched.Count > 0)
+                message += $"{(message.Length > 0 ? ", " : "")}{crcMismatched.Count} file(s) with CRC mismatch";
+            Log.Error(this, $"Input validation failed: {message}.", LogTarget.System);
+            return false;
+        }
+
+        Log.Information(this, $"Input validation passed: all {opts.ArchiveFilePaths.Count} file(s) present and verified.", LogTarget.System);
+        return true;
     }
 
     private void ValidateArchiveFileCrcs(string inputDirectory, Dictionary<string, string> expectedCrcs)
