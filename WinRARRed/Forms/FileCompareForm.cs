@@ -83,6 +83,18 @@ public partial class FileCompareForm : Form
         splitContainerVertical.Panel2Collapsed = !showHexViewToolStripMenuItem.Checked;
     }
 
+    private void ShowAllHexDataToolStripMenuItem_Click(object? sender, EventArgs e)
+    {
+        // Toggle ShowAllData property on both hex views
+        hexViewLeft.ShowAllData = showAllHexDataToolStripMenuItem.Checked;
+        hexViewRight.ShowAllData = showAllHexDataToolStripMenuItem.Checked;
+
+        // Reload the current data to apply the change
+        hexViewLeft.LoadData(_leftFileBytes);
+        hexViewRight.LoadData(_rightFileBytes);
+        RefreshHexComparison();
+    }
+
     #endregion
 
     #region Button Handlers
@@ -145,12 +157,13 @@ public partial class FileCompareForm : Form
     {
         if (nodeData.NodeType == CompareNodeType.DetailedBlock && nodeData.Data is RARDetailedBlock block)
         {
-            // Highlight the entire block (header + data)
-            hexView.SelectRange(block.StartOffset, (int)Math.Min(block.TotalSize, int.MaxValue));
+            // Show only this block's data in hex view
+            hexView.LoadBlockData(block.StartOffset, (int)Math.Min(block.TotalSize, int.MaxValue));
         }
         else
         {
-            hexView.ClearSelection();
+            // Show full file for non-block nodes
+            hexView.ShowFullFile();
         }
     }
 
@@ -175,7 +188,7 @@ public partial class FileCompareForm : Form
             }
 
             // Sync selection to right ListView if same property exists
-            SyncListViewSelection(listViewLeft, listViewRight, propertyName);
+            SyncListViewSelection(listViewLeft, listViewRight, propertyName, item.Index);
         }
     }
 
@@ -196,12 +209,26 @@ public partial class FileCompareForm : Form
             }
 
             // Sync selection to left ListView if same property exists
-            SyncListViewSelection(listViewRight, listViewLeft, propertyName);
+            SyncListViewSelection(listViewRight, listViewLeft, propertyName, item.Index);
         }
     }
 
-    private static void SyncListViewSelection(ListView source, ListView target, string propertyName)
+    private static void SyncListViewSelection(ListView source, ListView target, string propertyName, int sourceIndex)
     {
+        // First, try to find an item at the same index with the same name (most likely match)
+        if (sourceIndex < target.Items.Count && target.Items[sourceIndex].Text == propertyName)
+        {
+            var item = target.Items[sourceIndex];
+            if (!item.Selected)
+            {
+                target.SelectedItems.Clear();
+                item.Selected = true;
+                item.EnsureVisible();
+            }
+            return;
+        }
+
+        // Fall back to finding the first item with matching name
         foreach (ListViewItem item in target.Items)
         {
             if (item.Text == propertyName)
@@ -283,9 +310,9 @@ public partial class FileCompareForm : Form
             _leftData = LoadFileData(filePath);
             _leftPropertyOffsets.Clear();
 
-            // Parse detailed headers for RAR files
+            // Parse detailed headers for RAR files (SRR detailed blocks are in SRRFileData)
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext == ".rar" || ext == ".srr")
+            if (ext == ".rar")
             {
                 try
                 {
@@ -329,9 +356,9 @@ public partial class FileCompareForm : Form
             _rightData = LoadFileData(filePath);
             _rightPropertyOffsets.Clear();
 
-            // Parse detailed headers for RAR files
+            // Parse detailed headers for RAR files (SRR detailed blocks are in SRRFileData)
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext == ".rar" || ext == ".srr")
+            if (ext == ".rar")
             {
                 try
                 {
@@ -378,7 +405,7 @@ public partial class FileCompareForm : Form
 
         if (ext == ".srr")
         {
-            return SRRFile.Load(filePath);
+            return SRRFileData.Load(filePath);
         }
         else
         {
@@ -541,9 +568,9 @@ public partial class FileCompareForm : Form
         var result = new CompareResult();
 
         // Compare based on file types
-        if (_leftData is SRRFile leftSrr && _rightData is SRRFile rightSrr)
+        if (_leftData is SRRFileData leftSrrData && _rightData is SRRFileData rightSrrData)
         {
-            CompareSRRFiles(leftSrr, rightSrr, result);
+            CompareSRRFiles(leftSrrData.SrrFile, rightSrrData.SrrFile, result);
         }
         else if (_leftData is RARFileData leftRar && _rightData is RARFileData rightRar)
         {
@@ -565,7 +592,7 @@ public partial class FileCompareForm : Form
 
     private static string GetFileTypeName(object? data) => data switch
     {
-        SRRFile => "SRR File",
+        SRRFileData => "SRR File",
         RARFileData r => r.IsRAR5 ? "RAR 5.x" : "RAR 4.x",
         _ => "Unknown"
     };
@@ -883,17 +910,9 @@ public partial class FileCompareForm : Form
         {
             PopulateDetailedTree(tree, detailedBlocks, isLeft);
         }
-        else if (data is SRRFile srr)
+        else if (data is SRRFileData srrData)
         {
-            // For SRR files, try detailed blocks even without file headers (they may only have service blocks)
-            if (detailedBlocks != null && detailedBlocks.Count > 2)
-            {
-                PopulateDetailedTree(tree, detailedBlocks, isLeft);
-            }
-            else
-            {
-                PopulateSRRTree(tree, srr, isLeft);
-            }
+            PopulateSRRTree(tree, srrData, isLeft);
         }
         else if (data is RARFileData rar)
         {
@@ -946,8 +965,10 @@ public partial class FileCompareForm : Form
         rootNode.Expand();
     }
 
-    private void PopulateSRRTree(TreeView tree, SRRFile srr, bool isLeft)
+    private void PopulateSRRTree(TreeView tree, SRRFileData srrData, bool isLeft)
     {
+        var srr = srrData.SrrFile;
+
         var rootNode = tree.Nodes.Add("SRR File");
         rootNode.Tag = new CompareNodeData { NodeType = CompareNodeType.Root, Data = srr, IsLeft = isLeft };
 
@@ -962,6 +983,27 @@ public partial class FileCompareForm : Form
             {
                 var volNode = volumesNode.Nodes.Add(rar.FileName);
                 volNode.Tag = new CompareNodeData { NodeType = CompareNodeType.RarVolume, Data = rar, IsLeft = isLeft };
+
+                // Add detailed RAR block child nodes from pre-parsed data
+                if (srrData.VolumeDetailedBlocks.TryGetValue(rar.FileName, out var detailedBlocks))
+                {
+                    for (int i = 0; i < detailedBlocks.Count; i++)
+                    {
+                        var block = detailedBlocks[i];
+                        string blockLabel = $"[{i}] {block.BlockType}";
+                        if (!string.IsNullOrEmpty(block.ItemName))
+                            blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+
+                        var blockNode = volNode.Nodes.Add(blockLabel);
+                        blockNode.Tag = new CompareNodeData
+                        {
+                            NodeType = CompareNodeType.DetailedBlock,
+                            Data = block,
+                            FileName = block.ItemName,
+                            IsLeft = isLeft
+                        };
+                    }
+                }
             }
         }
 
@@ -1287,21 +1329,13 @@ public partial class FileCompareForm : Form
             // Check for differences if comparing
             if (_compareResult != null)
             {
-                var otherBlocks = isLeft ? _rightDetailedBlocks : _leftDetailedBlocks;
-                if (otherBlocks != null)
+                var otherBlock = FindMatchingDetailedBlock(block, isLeft);
+                if (otherBlock != null)
                 {
-                    // Find matching block and field in other file
-                    var otherBlock = otherBlocks.FirstOrDefault(b =>
-                        b.BlockType == block.BlockType &&
-                        b.ItemName == block.ItemName);
-
-                    if (otherBlock != null)
+                    var otherField = otherBlock.Fields.FirstOrDefault(f => f.Name == field.Name);
+                    if (otherField != null && otherField.Value != field.Value)
                     {
-                        var otherField = otherBlock.Fields.FirstOrDefault(f => f.Name == field.Name);
-                        if (otherField != null && otherField.Value != field.Value)
-                        {
-                            item.BackColor = ColorModified;
-                        }
+                        item.BackColor = ColorModified;
                     }
                 }
             }
@@ -1317,6 +1351,38 @@ public partial class FileCompareForm : Form
                 listView.Items.Add(childItem);
             }
         }
+    }
+
+    /// <summary>
+    /// Finds a matching detailed block on the other side for comparison.
+    /// Searches both RAR file detailed blocks and SRR volume detailed blocks.
+    /// </summary>
+    private RARDetailedBlock? FindMatchingDetailedBlock(RARDetailedBlock block, bool isLeft)
+    {
+        // First check RAR file detailed blocks
+        var otherBlocks = isLeft ? _rightDetailedBlocks : _leftDetailedBlocks;
+        if (otherBlocks != null)
+        {
+            var match = otherBlocks.FirstOrDefault(b =>
+                b.BlockType == block.BlockType &&
+                b.ItemName == block.ItemName);
+            if (match != null) return match;
+        }
+
+        // Then check SRR volume detailed blocks
+        var otherData = isLeft ? _rightData : _leftData;
+        if (otherData is SRRFileData otherSrrData)
+        {
+            foreach (var volumeBlocks in otherSrrData.VolumeDetailedBlocks.Values)
+            {
+                var match = volumeBlocks.FirstOrDefault(b =>
+                    b.BlockType == block.BlockType &&
+                    b.ItemName == block.ItemName);
+                if (match != null) return match;
+            }
+        }
+
+        return null;
     }
 
     private void ShowSRRArchiveProperties(ListView listView, SRRFile srr, bool isLeft)

@@ -188,22 +188,16 @@ public enum RAR5ServiceType : ulong
 /// <summary>
 /// Reads RAR 5.0 headers from a stream.
 /// </summary>
-public class RAR5HeaderReader
+/// <remarks>
+/// Creates a new RAR 5.0 header reader.
+/// </remarks>
+public class RAR5HeaderReader(Stream stream)
 {
     /// <summary>RAR 5.0 marker bytes.</summary>
     public static readonly byte[] RAR5Marker = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00];
 
-    private readonly Stream _stream;
-    private readonly BinaryReader _reader;
-
-    /// <summary>
-    /// Creates a new RAR 5.0 header reader.
-    /// </summary>
-    public RAR5HeaderReader(Stream stream)
-    {
-        _stream = stream ?? throw new ArgumentNullException(nameof(stream));
-        _reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
-    }
+    private readonly Stream _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+    private readonly BinaryReader _reader = new(stream, Encoding.UTF8, leaveOpen: true);
 
     /// <summary>
     /// Checks if the stream starts with RAR 5.0 marker.
@@ -246,7 +240,7 @@ public class RAR5HeaderReader
         _stream.Seek(4, SeekOrigin.Current);
 
         // Read header size vint
-        ulong headerSize = ReadVInt();
+        _ = ReadVInt();
 
         // Read type vint
         ulong headerType = ReadVInt();
@@ -289,7 +283,7 @@ public class RAR5HeaderReader
         if (_stream.Position + 4 > _stream.Length)
             return null;
 
-        long crcPosition = _stream.Position;
+        _ = _stream.Position;
         uint crc = _reader.ReadUInt32();
 
         long headerSizePosition = _stream.Position;
@@ -345,7 +339,7 @@ public class RAR5HeaderReader
                 result.FileInfo = ParseFileBlock(headerEnd, isSplitBefore, isSplitAfter);
                 break;
             case RAR5BlockType.Service:
-                result.ServiceBlockInfo = ParseServiceBlock(result, headerEnd);
+                result.ServiceBlockInfo = ParseServiceBlock(headerEnd);
                 break;
         }
 
@@ -361,12 +355,13 @@ public class RAR5HeaderReader
         return result;
     }
 
-    private RAR5ServiceBlockInfo? ParseServiceBlock(RAR5BlockReadResult block, long headerEnd)
+    private RAR5ServiceBlockInfo? ParseServiceBlock(long headerEnd)
     {
-        var info = new RAR5ServiceBlockInfo();
-
-        // Read file flags
-        info.FileFlags = ReadVInt();
+        var info = new RAR5ServiceBlockInfo
+        {
+            // Read file flags
+            FileFlags = ReadVInt()
+        };
 
         // Read unpacked size (unless UNKNOWN_SIZE flag is set)
         if ((info.FileFlags & (ulong)RAR5FileFlags.UnknownSize) == 0)
@@ -414,10 +409,11 @@ public class RAR5HeaderReader
 
     private RAR5ArchiveInfo ParseArchiveBlock(long headerEnd)
     {
-        var info = new RAR5ArchiveInfo();
-
-        // Read archive flags
-        info.ArchiveFlags = ReadVInt();
+        var info = new RAR5ArchiveInfo
+        {
+            // Read archive flags
+            ArchiveFlags = ReadVInt()
+        };
 
         // Read volume number if present
         if (info.HasVolumeNumber && _stream.Position < headerEnd)
@@ -433,11 +429,10 @@ public class RAR5HeaderReader
         var info = new RAR5FileInfo
         {
             IsSplitBefore = isSplitBefore,
-            IsSplitAfter = isSplitAfter
+            IsSplitAfter = isSplitAfter,
+            // Read file flags
+            FileFlags = ReadVInt()
         };
-
-        // Read file flags
-        info.FileFlags = ReadVInt();
 
         // Read unpacked size (unless UNKNOWN_SIZE flag is set)
         if ((info.FileFlags & (ulong)RAR5FileFlags.UnknownSize) == 0)

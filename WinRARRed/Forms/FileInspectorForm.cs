@@ -207,7 +207,8 @@ public partial class FileInspectorForm : Form
 
     private void LoadSRRFile(string filePath)
     {
-        var srr = SRRFile.Load(filePath);
+        var srrData = SRRFileData.Load(filePath);
+        var srr = srrData.SrrFile;
 
         var rootNode = treeView.Nodes.Add("SRR File");
         rootNode.Tag = srr;
@@ -218,8 +219,12 @@ public partial class FileInspectorForm : Form
             headerNode.Tag = srr.HeaderBlock;
         }
 
-        var archiveNode = rootNode.Nodes.Add("RAR Archive Info");
-        archiveNode.Tag = srr;
+        // Only show RAR Archive Info if the SRR contains RAR blocks
+        if (srr.RarFiles.Count > 0)
+        {
+            var archiveNode = rootNode.Nodes.Add("RAR Archive Info");
+            archiveNode.Tag = srr;
+        }
 
         if (srr.OsoHashBlocks.Count > 0)
         {
@@ -249,6 +254,21 @@ public partial class FileInspectorForm : Form
             {
                 var volNode = volumesNode.Nodes.Add(rar.FileName);
                 volNode.Tag = rar;
+
+                // Add detailed RAR block child nodes from pre-parsed data
+                if (srrData.VolumeDetailedBlocks.TryGetValue(rar.FileName, out var detailedBlocks))
+                {
+                    for (int i = 0; i < detailedBlocks.Count; i++)
+                    {
+                        var block = detailedBlocks[i];
+                        string blockLabel = $"[{i}] {block.BlockType}";
+                        if (!string.IsNullOrEmpty(block.ItemName))
+                            blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+
+                        var blockNode = volNode.Nodes.Add(blockLabel);
+                        blockNode.Tag = block;
+                    }
+                }
             }
             volumesNode.Expand();
         }
@@ -438,6 +458,10 @@ public partial class FileInspectorForm : Form
         else if (e.Node?.Tag is SrrRarFileBlock rarFile)
         {
             ShowRarFileBlockDetails(rarFile);
+        }
+        else if (e.Node?.Tag is RARDetailedBlock detailedBlock)
+        {
+            ShowDetailedBlockInfo(detailedBlock);
         }
         else if (e.Node?.Tag is SRRFile srr)
         {
@@ -661,6 +685,41 @@ public partial class FileInspectorForm : Form
         AddListItem("Header Size", $"{rar.HeaderSize} bytes");
         AddListItem("Flags (Raw)", $"0x{rar.Flags:X4}");
         AddListItem("Add Size", $"{rar.AddSize} bytes");
+    }
+
+    private void ShowDetailedBlockInfo(RARDetailedBlock block)
+    {
+        listView.Items.Clear();
+        txtComment.Clear();
+
+        // Block summary
+        AddListItem("Block Type", block.BlockType);
+        AddListItem("Start Offset", $"0x{block.StartOffset:X}");
+        AddListItem("Header Size", $"{block.HeaderSize} bytes");
+        AddListItem("Total Size", $"{block.TotalSize:N0} bytes");
+        if (block.HasData)
+            AddListItem("Data Size", $"{block.DataSize:N0} bytes");
+        if (!string.IsNullOrEmpty(block.ItemName))
+            AddListItem("Item Name", block.ItemName);
+
+        // Separator
+        AddListItem("", "--- Fields ---");
+
+        // All fields with offset, value, and description
+        foreach (var field in block.Fields)
+        {
+            string value = field.Value;
+            if (!string.IsNullOrEmpty(field.Description) && field.Description != field.Value)
+                value = $"{field.Value} ({field.Description})";
+
+            AddListItem(field.Name, value);
+
+            // Flag children indented
+            foreach (var child in field.Children)
+            {
+                AddListItem($"  {child.Name}", child.Value);
+            }
+        }
     }
 
     private void ShowSrrHeaderBlockDetails(SrrHeaderBlock header)

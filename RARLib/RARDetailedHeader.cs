@@ -101,6 +101,75 @@ public class RARDetailedParser
         return blocks;
     }
 
+    /// <summary>
+    /// Parses RAR blocks starting from the current stream position.
+    /// Used for parsing embedded RAR data within SRR files.
+    /// </summary>
+    public static List<RARDetailedBlock> ParseFromPosition(Stream stream)
+    {
+        var blocks = new List<RARDetailedBlock>();
+
+        if (!HasValidRARSignature(stream))
+            return blocks;
+
+        bool isRAR5 = RAR5HeaderReader.IsRAR5(stream);
+
+        if (isRAR5)
+        {
+            ParseRAR5(stream, blocks);
+        }
+        else
+        {
+            ParseRAR4(stream, blocks);
+        }
+
+        return blocks;
+    }
+
+    private static readonly byte[] RAR4Signature = [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00];
+
+    /// <summary>
+    /// Checks whether a valid RAR4 or RAR5 signature exists at the current stream position.
+    /// Restores the stream position after checking.
+    /// </summary>
+    private static bool HasValidRARSignature(Stream stream)
+    {
+        long pos = stream.Position;
+        if (stream.Length - pos < 7)
+            return false;
+
+        byte[] buf = new byte[8];
+        int read = stream.Read(buf, 0, 8);
+        stream.Position = pos;
+
+        if (read < 7)
+            return false;
+
+        // Check RAR4 signature (7 bytes)
+        bool isRar4 = true;
+        for (int i = 0; i < 7; i++)
+        {
+            if (buf[i] != RAR4Signature[i])
+            {
+                isRar4 = false;
+                break;
+            }
+        }
+        if (isRar4)
+            return true;
+
+        // Check RAR5 signature (8 bytes)
+        if (read < 8)
+            return false;
+
+        for (int i = 0; i < 8; i++)
+        {
+            if (buf[i] != RAR5HeaderReader.RAR5Marker[i])
+                return false;
+        }
+        return true;
+    }
+
     #region RAR 4.x Parsing
 
     private static void ParseRAR4(Stream stream, List<RARDetailedBlock> blocks)
@@ -108,13 +177,14 @@ public class RARDetailedParser
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
 
         // Parse signature
-        if (stream.Length >= 7)
+        long sigStart = stream.Position;
+        if (stream.Length - sigStart >= 7)
         {
             var sigBlock = new RARDetailedBlock
             {
                 BlockType = "Signature",
                 BlockTypeValue = 0,
-                StartOffset = 0,
+                StartOffset = sigStart,
                 TotalSize = 7,
                 HeaderSize = 7
             };
@@ -123,7 +193,7 @@ public class RARDetailedParser
             sigBlock.Fields.Add(new RARHeaderField
             {
                 Name = "Signature",
-                Offset = 0,
+                Offset = sigStart,
                 Length = 7,
                 RawBytes = sig,
                 Value = BitConverter.ToString(sig).Replace("-", " "),
@@ -702,13 +772,14 @@ public class RARDetailedParser
         using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
 
         // Parse signature (8 bytes)
-        if (stream.Length >= 8)
+        long sigStart = stream.Position;
+        if (stream.Length - sigStart >= 8)
         {
             var sigBlock = new RARDetailedBlock
             {
                 BlockType = "Signature",
                 BlockTypeValue = 0,
-                StartOffset = 0,
+                StartOffset = sigStart,
                 TotalSize = 8,
                 HeaderSize = 8
             };
@@ -717,7 +788,7 @@ public class RARDetailedParser
             sigBlock.Fields.Add(new RARHeaderField
             {
                 Name = "Signature",
-                Offset = 0,
+                Offset = sigStart,
                 Length = 8,
                 RawBytes = sig,
                 Value = BitConverter.ToString(sig).Replace("-", " "),

@@ -14,16 +14,26 @@ public class HexViewControl : UserControl
 {
     private readonly RichTextBox _richTextBox;
     private byte[]? _data;
+    private byte[]? _fullData; // Keep reference to full file data for block extraction
     private byte[]? _otherData; // Store reference for comparison instead of copying
+    private byte[]? _otherFullData; // Full comparison data for block mode
     private int _bytesPerLine = 16;
     private int _selectionStart = -1;
     private int _selectionLength = 0;
     private int _totalFileSize;
+    private long _blockStartOffset; // Offset in file where displayed block starts
+    private bool _blockViewMode; // True when showing only a block, not entire file
 
     /// <summary>
     /// Maximum bytes to display in hex view (default 64KB).
     /// </summary>
     public const int MaxDisplayBytes = 65536;
+
+    /// <summary>
+    /// Gets or sets whether to show all data without the 64KB limit.
+    /// Warning: Large files may cause performance issues.
+    /// </summary>
+    public bool ShowAllData { get; set; }
 
     public HexViewControl()
     {
@@ -65,28 +75,116 @@ public class HexViewControl : UserControl
     public void LoadData(byte[]? data)
     {
         _otherData = null;
+        _otherFullData = null;
         _selectionStart = -1;
         _selectionLength = 0;
+        _blockViewMode = false;
+        _blockStartOffset = 0;
 
         if (data == null)
         {
             _data = null;
+            _fullData = null;
             _totalFileSize = 0;
             _richTextBox.Clear();
             return;
         }
 
+        _fullData = data;
         _totalFileSize = data.Length;
 
-        // Limit display size to prevent memory issues
-        if (data.Length > MaxDisplayBytes)
+        // Limit display size to prevent memory issues (unless ShowAllData is enabled)
+        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
+        if (data.Length > maxBytes)
         {
-            _data = new byte[MaxDisplayBytes];
-            Array.Copy(data, _data, MaxDisplayBytes);
+            _data = new byte[maxBytes];
+            Array.Copy(data, _data, maxBytes);
         }
         else
         {
             _data = data;
+        }
+
+        RefreshDisplay();
+    }
+
+    /// <summary>
+    /// Loads only a specific block/range of data from the file.
+    /// The hex view will show offsets relative to the file, not the block.
+    /// </summary>
+    /// <param name="startOffset">Start offset in the file</param>
+    /// <param name="length">Length of block to display</param>
+    public void LoadBlockData(long startOffset, int length)
+    {
+        if (_fullData == null || startOffset < 0 || startOffset >= _fullData.Length)
+        {
+            _richTextBox.Clear();
+            return;
+        }
+
+        _blockViewMode = true;
+        _blockStartOffset = startOffset;
+        _selectionStart = -1;
+        _selectionLength = 0;
+
+        // Extract block data
+        int actualLength = (int)Math.Min(length, _fullData.Length - startOffset);
+        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
+        actualLength = Math.Min(actualLength, maxBytes);
+
+        _data = new byte[actualLength];
+        Array.Copy(_fullData, startOffset, _data, 0, actualLength);
+
+        // Also extract comparison data for the same range if available
+        if (_otherFullData != null && startOffset < _otherFullData.Length)
+        {
+            int otherLength = (int)Math.Min(actualLength, _otherFullData.Length - startOffset);
+            _otherData = new byte[otherLength];
+            Array.Copy(_otherFullData, startOffset, _otherData, 0, otherLength);
+        }
+        else
+        {
+            _otherData = null;
+        }
+
+        RefreshDisplay();
+    }
+
+    /// <summary>
+    /// Resets to showing the full file (exits block view mode).
+    /// </summary>
+    public void ShowFullFile()
+    {
+        if (_fullData == null) return;
+
+        _blockViewMode = false;
+        _blockStartOffset = 0;
+        _selectionStart = -1;
+        _selectionLength = 0;
+
+        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
+        if (_fullData.Length > maxBytes)
+        {
+            _data = new byte[maxBytes];
+            Array.Copy(_fullData, _data, maxBytes);
+        }
+        else
+        {
+            _data = _fullData;
+        }
+
+        // Restore full comparison data
+        if (_otherFullData != null)
+        {
+            if (_otherFullData.Length > maxBytes)
+            {
+                _otherData = new byte[maxBytes];
+                Array.Copy(_otherFullData, _otherData, maxBytes);
+            }
+            else
+            {
+                _otherData = _otherFullData;
+            }
         }
 
         RefreshDisplay();
@@ -107,21 +205,50 @@ public class HexViewControl : UserControl
 
     /// <summary>
     /// Sets the selection highlight and scrolls to it.
+    /// Accepts absolute file offsets - automatically converts to display-relative offsets in block view mode.
     /// </summary>
     public void SelectRange(long offset, int length)
     {
-        if (offset >= MaxDisplayBytes)
+        if (_data == null || _data.Length == 0)
         {
-            // Selection is beyond displayed range
             _selectionStart = -1;
             _selectionLength = 0;
             return;
         }
 
-        _selectionStart = (int)offset;
-        _selectionLength = Math.Min(length, MaxDisplayBytes - _selectionStart);
+        // Convert absolute file offset to display-relative offset
+        long displayOffset = offset;
+        if (_blockViewMode)
+        {
+            // In block view mode, offset is absolute file position
+            // Convert to position relative to block start
+            displayOffset = offset - _blockStartOffset;
+
+            // Check if selection is within the displayed block
+            if (displayOffset < 0 || displayOffset >= _data.Length)
+            {
+                // Selection is outside displayed block range
+                _selectionStart = -1;
+                _selectionLength = 0;
+                return;
+            }
+        }
+        else
+        {
+            // In full file view, check against display limit
+            int maxBytes = ShowAllData ? _data.Length : MaxDisplayBytes;
+            if (displayOffset >= maxBytes)
+            {
+                _selectionStart = -1;
+                _selectionLength = 0;
+                return;
+            }
+        }
+
+        _selectionStart = (int)displayOffset;
+        _selectionLength = Math.Min(length, _data.Length - _selectionStart);
         RefreshDisplay();
-        ScrollToOffset(offset);
+        ScrollToOffset(displayOffset);
     }
 
     /// <summary>
@@ -168,6 +295,8 @@ public class HexViewControl : UserControl
     /// </summary>
     public void SetComparisonData(byte[]? otherData)
     {
+        _otherFullData = otherData; // Keep full reference for block extraction
+
         if (otherData == null)
         {
             _otherData = null;
@@ -222,7 +351,7 @@ public class HexViewControl : UserControl
         rtf.Append(@"\f0\fs18 ");  // Font and size
 
         // Show truncation notice if file is larger than display limit
-        if (_totalFileSize > MaxDisplayBytes)
+        if (_totalFileSize > MaxDisplayBytes && !_blockViewMode)
         {
             rtf.Append(@"\cf2 [Showing first ");
             rtf.Append(MaxDisplayBytes / 1024);
@@ -231,14 +360,25 @@ public class HexViewControl : UserControl
             rtf.Append(@" KB]\cf1\par\par ");
         }
 
+        // Show block view notice
+        if (_blockViewMode)
+        {
+            rtf.Append(@"\cf2 [Block view: offset 0x");
+            rtf.Append(_blockStartOffset.ToString("X"));
+            rtf.Append(@", ");
+            rtf.Append(_data!.Length);
+            rtf.Append(@" bytes]\cf1\par\par ");
+        }
+
         for (int line = 0; line < totalLines; line++)
         {
             int offset = line * _bytesPerLine;
             int count = Math.Min(_bytesPerLine, displayLength - offset);
 
-            // Address (gray)
+            // Address (gray) - show file offset, not block-relative offset
+            long displayOffset = _blockViewMode ? _blockStartOffset + offset : offset;
             rtf.Append(@"\cf2 ");
-            rtf.Append(offset.ToString("X8"));
+            rtf.Append(displayOffset.ToString("X8"));
             rtf.Append(@"\cf1   ");
 
             // Hex bytes - batch consecutive same-state bytes

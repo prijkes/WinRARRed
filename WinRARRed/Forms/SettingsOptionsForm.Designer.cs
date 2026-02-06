@@ -115,6 +115,7 @@ partial class SettingsOptionsForm
             btnImportSrr = new System.Windows.Forms.Button();
             btnCancel = new System.Windows.Forms.Button();
             cbDeleteRARFiles = new System.Windows.Forms.CheckBox();
+            cbDeleteDuplicateCRCFiles = new System.Windows.Forms.CheckBox();
             cbStopOnFirstMatch = new System.Windows.Forms.CheckBox();
             checkBox1 = new System.Windows.Forms.CheckBox();
             checkBox2 = new System.Windows.Forms.CheckBox();
@@ -124,6 +125,7 @@ partial class SettingsOptionsForm
             lblHostOSDetected = new System.Windows.Forms.Label();
             lblHostOSInfo = new System.Windows.Forms.Label();
             cbEnableHostOSPatching = new System.Windows.Forms.CheckBox();
+            cbUseOldVolumeNaming = new System.Windows.Forms.CheckBox();
             gbFileOptions.SuspendLayout();
             gbRARVersion.SuspendLayout();
             gbSwitches.SuspendLayout();
@@ -639,6 +641,7 @@ partial class SettingsOptionsForm
             groupBox9.Controls.Add(cbSwitchV);
             groupBox9.Controls.Add(rbSwitchSizeGB);
             groupBox9.Controls.Add(rbSwitchSizeMB);
+            groupBox9.Controls.Add(cbUseOldVolumeNaming);
             groupBox9.Location = new System.Drawing.Point(6, 22);
             groupBox9.Name = "groupBox9";
             groupBox9.Size = new System.Drawing.Size(680, 101);
@@ -729,9 +732,9 @@ partial class SettingsOptionsForm
             rbSwitchSizeGB.TabIndex = 20;
             rbSwitchSizeGB.Text = "GB - 1000 MB";
             rbSwitchSizeGB.UseVisualStyleBackColor = true;
-            // 
+            //
             // rbSwitchSizeMB
-            // 
+            //
             rbSwitchSizeMB.AutoSize = true;
             rbSwitchSizeMB.Checked = true;
             rbSwitchSizeMB.Enabled = false;
@@ -742,7 +745,18 @@ partial class SettingsOptionsForm
             rbSwitchSizeMB.TabStop = true;
             rbSwitchSizeMB.Text = "MB - 1000 KB";
             rbSwitchSizeMB.UseVisualStyleBackColor = true;
-            // 
+            //
+            // cbUseOldVolumeNaming
+            //
+            cbUseOldVolumeNaming.AutoSize = true;
+            cbUseOldVolumeNaming.Enabled = false;
+            cbUseOldVolumeNaming.Location = new System.Drawing.Point(6, 47);
+            cbUseOldVolumeNaming.Name = "cbUseOldVolumeNaming";
+            cbUseOldVolumeNaming.Size = new System.Drawing.Size(298, 19);
+            cbUseOldVolumeNaming.TabIndex = 27;
+            cbUseOldVolumeNaming.Text = "vn - Use old volume naming (.rar, .r00 instead of .partXX)";
+            cbUseOldVolumeNaming.UseVisualStyleBackColor = true;
+            //
             // cbSwitchR
             // 
             cbSwitchR.AutoSize = true;
@@ -1076,9 +1090,9 @@ partial class SettingsOptionsForm
             btnCancel.TabIndex = 36;
             btnCancel.Text = "Cancel";
             btnCancel.UseVisualStyleBackColor = true;
-            // 
+            //
             // cbDeleteRARFiles
-            // 
+            //
             cbDeleteRARFiles.AutoSize = true;
             cbDeleteRARFiles.Checked = true;
             cbDeleteRARFiles.CheckState = System.Windows.Forms.CheckState.Checked;
@@ -1088,9 +1102,22 @@ partial class SettingsOptionsForm
             cbDeleteRARFiles.TabIndex = 26;
             cbDeleteRARFiles.Text = "Delete RAR files if checksum does not match";
             cbDeleteRARFiles.UseVisualStyleBackColor = true;
-            // 
+            cbDeleteRARFiles.CheckedChanged += CbDeleteRARFiles_CheckedChanged;
+            //
+            // cbDeleteDuplicateCRCFiles
+            //
+            cbDeleteDuplicateCRCFiles.AutoSize = true;
+            cbDeleteDuplicateCRCFiles.Checked = true;
+            cbDeleteDuplicateCRCFiles.CheckState = System.Windows.Forms.CheckState.Checked;
+            cbDeleteDuplicateCRCFiles.Location = new System.Drawing.Point(12, 844);
+            cbDeleteDuplicateCRCFiles.Name = "cbDeleteDuplicateCRCFiles";
+            cbDeleteDuplicateCRCFiles.Size = new System.Drawing.Size(261, 19);
+            cbDeleteDuplicateCRCFiles.TabIndex = 47;
+            cbDeleteDuplicateCRCFiles.Text = "Delete duplicate CRC files (keep only unique)";
+            cbDeleteDuplicateCRCFiles.UseVisualStyleBackColor = true;
+            //
             // cbStopOnFirstMatch
-            // 
+            //
             cbStopOnFirstMatch.AutoSize = true;
             cbStopOnFirstMatch.Checked = true;
             cbStopOnFirstMatch.CheckState = System.Windows.Forms.CheckState.Checked;
@@ -1193,10 +1220,11 @@ partial class SettingsOptionsForm
             // 
             AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            ClientSize = new System.Drawing.Size(1154, 851);
+            ClientSize = new System.Drawing.Size(1154, 876);
             Controls.Add(gbHostOSOverride);
             Controls.Add(groupBox5);
             Controls.Add(cbStopOnFirstMatch);
+            Controls.Add(cbDeleteDuplicateCRCFiles);
             Controls.Add(cbDeleteRARFiles);
             Controls.Add(btnCancel);
             Controls.Add(btnImportSrr);
@@ -1306,6 +1334,7 @@ partial class SettingsOptionsForm
         private System.Windows.Forms.CheckBox cbFileA;
         private System.Windows.Forms.Label label3;
         private System.Windows.Forms.CheckBox cbDeleteRARFiles;
+        private System.Windows.Forms.CheckBox cbDeleteDuplicateCRCFiles;
         private System.Windows.Forms.CheckBox cbSwitchSDash;
         private System.Windows.Forms.CheckBox cbSwitchDS;
         private System.Windows.Forms.GroupBox groupBox1;
@@ -1341,5 +1370,6 @@ partial class SettingsOptionsForm
         private System.Windows.Forms.CheckBox cbEnableHostOSPatching;
         private System.Windows.Forms.Label lblHostOSInfo;
         private System.Windows.Forms.Label lblHostOSDetected;
-    private System.Windows.Forms.CheckBox cbStopOnFirstMatch;
+        private System.Windows.Forms.CheckBox cbStopOnFirstMatch;
+        private System.Windows.Forms.CheckBox cbUseOldVolumeNaming;
 }

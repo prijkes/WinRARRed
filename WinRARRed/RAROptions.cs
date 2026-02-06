@@ -46,6 +46,15 @@ public class RAROptions
     public bool DeleteRARFiles { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to delete duplicate CRC files.
+    /// When enabled, only the first occurrence of each unique CRC is kept.
+    /// </summary>
+    /// <value>
+    ///   <c>true</c> to delete files with duplicate CRCs; otherwise, <c>false</c>.
+    /// </value>
+    public bool DeleteDuplicateCRCFiles { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets a value indicating whether to stop brute-forcing on the first successful match.
     /// </summary>
     /// <value>
@@ -165,6 +174,13 @@ public class RAROptions
     /// Gets or sets the detected file attributes from CMT service block in the SRR.
     /// </summary>
     public uint? DetectedCmtFileAttributes { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether to use old volume naming scheme (.rar, .r00, .r01) instead of new (.part01.rar).
+    /// When true, adds the -vn flag to RAR command line to disable new numbering.
+    /// Auto-detected from SRR when the NEW_NUMBERING archive flag (0x0010) is NOT set.
+    /// </summary>
+    public bool UseOldVolumeNaming { get; set; }
 
     /// <summary>
     /// Returns true if patching is needed (Host OS differs from current platform).

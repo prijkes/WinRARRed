@@ -154,17 +154,11 @@ public sealed partial class RARProcess
     }
 
     // Custom stream class to capture data as it arrives (byte-by-byte)
-    private class OutStream : Stream
+    private class OutStream(Action<string> onData, Encoding encoding) : Stream
     {
         private readonly StringBuilder _buffer = new();
-        private readonly Action<string> _onData;
-        private readonly Encoding _encoding;
-
-        public OutStream(Action<string> onData, Encoding encoding)
-        {
-            _onData = onData;
-            _encoding = encoding;
-        }
+        private readonly Action<string> _onData = onData;
+        private readonly Encoding _encoding = encoding;
 
         public override bool CanRead => false;
         public override bool CanSeek => false;

@@ -135,7 +135,10 @@ public partial class Manager
         Log.Information(this, $"Release: {options.ReleaseDirectoryPath}", LogTarget.System);
         Log.Information(this, $"Output: {options.OutputDirectoryPath}", LogTarget.System);
         Log.Information(this, $"Expected {options.HashType}: {string.Join(", ", options.Hashes)}", LogTarget.System);
-        Log.Information(this, $"Stop on first match: {options.RAROptions.StopOnFirstMatch}", LogTarget.System);
+
+        // Log all settings
+        LogBruteForceSettings(options);
+
         BruteForceOptions = options;
 
         DateTime bruteForceStartDateTime = DateTime.Now;
@@ -656,6 +659,8 @@ public partial class Manager
             Directory.CreateDirectory(rarOutputDir);
         }
 
+        bool loggedRAR6TimestampSkip = false; // Only log RAR 6.x timestamp skip once per version
+
         for (int j = 0; j < options.RAROptions.CommandLineArguments.Count; j++)
         {
             RARCommandLineArgument[] commandLineArguments = options.RAROptions.CommandLineArguments[j];
@@ -674,6 +679,21 @@ public partial class Manager
             ).Select(a => a.Argument);
 
             string joinedArguments = string.Join("", filteredArguments);
+
+            // RAR 6.x doesn't honor timestamp options (-tsc0/-tsa0) for RAR4 format archives
+            // Skip this combination to avoid creating archives with wrong extended time flags
+            bool hasTimestampOptions = filteredArguments.Any(a => a.StartsWith("-ts"));
+            bool isRAR4Format = archiveVersion == RARArchiveVersion.RAR4 ||
+                               (version >= 550 && !filteredArguments.Contains("-ma5"));
+            if (version >= 600 && isRAR4Format && hasTimestampOptions)
+            {
+                if (!loggedRAR6TimestampSkip)
+                {
+                    Log.Debug(this, $"Skipping RAR {version} with timestamp options for RAR4 format (known issue)", LogTarget.Phase2);
+                    loggedRAR6TimestampSkip = true;
+                }
+                continue;
+            }
             string archiveAttribute = options.RAROptions.SetFileArchiveAttribute != CheckState.Unchecked && archiveAttributeIteration == 0 ? "archived-" : string.Empty;
             string notContentIndexedAttribute = options.RAROptions.SetFileNotContentIndexedAttribute != CheckState.Unchecked && notContentAttributeIteration == 0 ? "notcontentindexed-" : string.Empty;
             // Output RAR file to the rarOutputDir subdirectory
@@ -690,6 +710,19 @@ public partial class Manager
 
             // Build final arguments list, including comment option if available
             List<string> finalArguments = [.. filteredArguments];
+
+            // Auto-add -ma4 for RAR 5.50+ to force RAR4 format (unless -ma5 was explicitly requested)
+            if (version >= 550 && !finalArguments.Contains("-ma4") && !finalArguments.Contains("-ma5"))
+            {
+                finalArguments.Insert(0, "-ma4");
+            }
+
+            // Add -vn for old volume naming if enabled (available since RAR 3.00)
+            if (options.RAROptions.UseOldVolumeNaming && version >= 300 && !finalArguments.Contains("-vn"))
+            {
+                finalArguments.Add("-vn");
+            }
+
             if (!string.IsNullOrEmpty(CommentFilePath))
             {
                 // Add comment option: -z<commentfile>
@@ -731,7 +764,7 @@ public partial class Manager
 
             Log.Write(this, $"Hash for {actualRarFilePath}: {hash} (match: {options.Hashes.Contains(hash)})", LogTarget.Phase2);
 
-            // Track if we've seen this hash before (to avoid creating duplicates)
+            // Track if we've seen this hash before (to avoid keeping duplicates)
             bool isDuplicateHash = fileHashes.Contains(hash);
             fileHashes.Add(hash);
 
@@ -739,10 +772,16 @@ public partial class Manager
             {
                 if (options.RAROptions.DeleteRARFiles)
                 {
-                    // Delete all volumes including first
+                    // Delete all non-matching files
                     DeleteRARFileAndVolumes(actualRarFilePath);
                 }
-                // If DeleteRARFiles is false, keep all files for debugging
+                else if (options.RAROptions.DeleteDuplicateCRCFiles && isDuplicateHash)
+                {
+                    // Delete duplicates to save disk space (only keep unique CRC files)
+                    Log.Debug(this, $"Deleting duplicate hash file: {actualRarFilePath} (hash: {hash})", LogTarget.Phase2);
+                    DeleteRARFileAndVolumes(actualRarFilePath);
+                }
+                // If DeleteRARFiles is false and (DeleteDuplicateCRCFiles is false or not a duplicate), keep for debugging
 
                 continue;
             }
@@ -1441,8 +1480,10 @@ public partial class Manager
         string outputDir = Path.Combine(phase1Dir, "output");
         Directory.CreateDirectory(outputDir);
 
-        int totalTests = 0;
+        int totalTests = allRarDirectories.Count;
+        int currentTest = 0;
         int matchCount = 0;
+        DateTime phase1StartTime = DateTime.Now;
 
         // For Phase 1, use the CMT compression method (not file compression method)
         // CMT CompressionMethod is stored as raw 0x30-0x35, convert to 0-5 for -m flag
@@ -1479,7 +1520,10 @@ public partial class Manager
             string rarExePath = Path.Combine(rarVersionDir, "rar.exe");
             string versionName = Path.GetFileName(rarVersionDir);
 
-            totalTests++;
+            currentTest++;
+
+            // Fire progress event for Phase 1
+            FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDir, $"{cmtMethodArg} {cmtDictArg}", totalTests, currentTest, phase1StartTime));
 
             // Build arguments using CMT-specific compression method and dictionary
             List<string> args = ["a", "-r", cmtMethodArg, cmtDictArg, $"-z{commentFilePath}"];
@@ -1563,5 +1607,117 @@ public partial class Manager
         }
 
         return matchedVersions;
+    }
+
+    /// <summary>
+    /// Logs all brute-force settings for debugging and tracking purposes.
+    /// </summary>
+    private void LogBruteForceSettings(BruteForceOptions options)
+    {
+        var opts = options.RAROptions;
+
+        Log.Information(this, "=== Settings ===", LogTarget.System);
+
+        // General settings
+        Log.Information(this, $"  Stop on first match: {opts.StopOnFirstMatch}", LogTarget.System);
+        Log.Information(this, $"  Delete non-matching RAR files: {opts.DeleteRARFiles}", LogTarget.System);
+        Log.Information(this, $"  Delete duplicate CRC files: {opts.DeleteDuplicateCRCFiles}", LogTarget.System);
+
+        // File attributes
+        Log.Information(this, $"  Set Archive attribute: {opts.SetFileArchiveAttribute}", LogTarget.System);
+        Log.Information(this, $"  Set NotContentIndexed attribute: {opts.SetFileNotContentIndexedAttribute}", LogTarget.System);
+
+        // Version ranges
+        if (opts.RARVersions.Count > 0)
+        {
+            var versionRanges = string.Join(", ", opts.RARVersions.Select(v =>
+                v.End > v.Start ? $"{v.Start}-{v.End}" : v.Start.ToString()));
+            Log.Information(this, $"  RAR version ranges: {versionRanges}", LogTarget.System);
+        }
+        else
+        {
+            Log.Information(this, "  RAR version ranges: All versions", LogTarget.System);
+        }
+
+        // Command line arguments
+        Log.Information(this, $"  Command line combinations: {opts.CommandLineArguments.Count}", LogTarget.System);
+        if (opts.CommandLineArguments.Count > 0 && opts.CommandLineArguments.Count <= 10)
+        {
+            foreach (var args in opts.CommandLineArguments)
+            {
+                var argStr = string.Join(" ", args.Select(a => a.Argument));
+                Log.Debug(this, $"    Args: {argStr}", LogTarget.System);
+            }
+        }
+
+        // Archive comment
+        Log.Information(this, $"  Has archive comment: {!string.IsNullOrEmpty(opts.ArchiveComment)}", LogTarget.System);
+        Log.Information(this, $"  Can use Phase 1 (CMT): {opts.CanUseCommentPhase}", LogTarget.System);
+        if (opts.CmtCompressionMethod.HasValue)
+        {
+            string methodName = opts.CmtCompressionMethod.Value switch
+            {
+                0x30 => "Store",
+                0x31 => "Fastest",
+                0x32 => "Fast",
+                0x33 => "Normal",
+                0x34 => "Good",
+                0x35 => "Best",
+                _ => $"0x{opts.CmtCompressionMethod.Value:X2}"
+            };
+            Log.Information(this, $"  CMT compression method: {methodName}", LogTarget.System);
+        }
+
+        // Volume naming
+        Log.Information(this, $"  Use old volume naming (-vn): {opts.UseOldVolumeNaming}", LogTarget.System);
+
+        // Host OS patching
+        Log.Information(this, $"  Enable Host OS patching: {opts.EnableHostOSPatching}", LogTarget.System);
+        if (opts.DetectedFileHostOS.HasValue)
+        {
+            string hostOSName = opts.DetectedFileHostOS.Value switch
+            {
+                0 => "MS-DOS",
+                1 => "OS/2",
+                2 => "Windows",
+                3 => "Unix",
+                4 => "Mac OS",
+                5 => "BeOS",
+                _ => $"Unknown ({opts.DetectedFileHostOS.Value})"
+            };
+            Log.Information(this, $"  Detected file Host OS: {hostOSName} (0x{opts.DetectedFileHostOS.Value:X2})", LogTarget.System);
+        }
+        if (opts.DetectedFileAttributes.HasValue)
+        {
+            Log.Information(this, $"  Detected file attributes: 0x{opts.DetectedFileAttributes.Value:X8}", LogTarget.System);
+        }
+        if (opts.DetectedCmtHostOS.HasValue)
+        {
+            Log.Information(this, $"  Detected CMT Host OS: 0x{opts.DetectedCmtHostOS.Value:X2}", LogTarget.System);
+        }
+        if (opts.DetectedCmtFileTime.HasValue)
+        {
+            Log.Information(this, $"  Detected CMT file time: 0x{opts.DetectedCmtFileTime.Value:X8}", LogTarget.System);
+        }
+        if (opts.DetectedCmtFileAttributes.HasValue)
+        {
+            Log.Information(this, $"  Detected CMT attributes: 0x{opts.DetectedCmtFileAttributes.Value:X8}", LogTarget.System);
+        }
+        Log.Information(this, $"  Needs Host OS patching: {opts.NeedsHostOSPatching}", LogTarget.System);
+
+        // File/directory counts
+        Log.Information(this, $"  File timestamps to apply: {opts.FileTimestamps.Count}", LogTarget.System);
+        Log.Information(this, $"  File creation times to apply: {opts.FileCreationTimes.Count}", LogTarget.System);
+        Log.Information(this, $"  File access times to apply: {opts.FileAccessTimes.Count}", LogTarget.System);
+        Log.Information(this, $"  Directory timestamps to apply: {opts.DirectoryTimestamps.Count}", LogTarget.System);
+        Log.Information(this, $"  Archive file CRCs to verify: {opts.ArchiveFileCrcs.Count}", LogTarget.System);
+
+        if (opts.HasArchiveFileList)
+        {
+            Log.Information(this, $"  Archive file paths: {opts.ArchiveFilePaths.Count}", LogTarget.System);
+            Log.Information(this, $"  Archive directory paths: {opts.ArchiveDirectoryPaths.Count}", LogTarget.System);
+        }
+
+        Log.Information(this, "=== End Settings ===", LogTarget.System);
     }
 }

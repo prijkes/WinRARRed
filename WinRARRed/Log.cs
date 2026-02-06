@@ -28,28 +28,22 @@ public enum LogTarget
 /// <summary>
 /// Provides data for log events, including the message text and target log panel.
 /// </summary>
-public class LogEventArgs : EventArgs
+/// <remarks>
+/// Initializes a new instance of the <see cref="LogEventArgs"/> class.
+/// </remarks>
+/// <param name="message">The log message text.</param>
+/// <param name="target">The target log panel. Defaults to <see cref="LogTarget.System"/>.</param>
+public class LogEventArgs(string message, LogTarget target = LogTarget.System) : EventArgs
 {
     /// <summary>
     /// Gets the log message text.
     /// </summary>
-    public string Message { get; }
+    public string Message { get; } = message;
 
     /// <summary>
     /// Gets the target log panel for this message.
     /// </summary>
-    public LogTarget Target { get; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="LogEventArgs"/> class.
-    /// </summary>
-    /// <param name="message">The log message text.</param>
-    /// <param name="target">The target log panel. Defaults to <see cref="LogTarget.System"/>.</param>
-    public LogEventArgs(string message, LogTarget target = LogTarget.System)
-    {
-        Message = message;
-        Target = target;
-    }
+    public LogTarget Target { get; } = target;
 }
 
 /// <summary>
@@ -63,7 +57,12 @@ public static class Log
     /// </summary>
     public static event EventHandler<LogEventArgs>? Logged;
 
-    private static readonly ILogger Logger;
+    private static readonly Serilog.Core.Logger Logger;
+
+    /// <summary>
+    /// The timestamp when the application started, used in log filenames.
+    /// </summary>
+    public static readonly DateTime StartupTime = DateTime.Now;
 
     static Log()
     {
@@ -74,15 +73,17 @@ public static class Log
         // Ensure logs directory exists
         Directory.CreateDirectory(logsDirectory);
 
+        // Generate log filename with startup timestamp (e.g., winrarred-2026-02-02_14-30-45.log)
+        string startupTimestamp = StartupTime.ToString("yyyy-MM-dd_HH-mm-ss");
+        string logFileName = $"winrarred-{startupTimestamp}.log";
+
         // Configure Serilog
         Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.File(
-                path: Path.Combine(logsDirectory, "winrarred-.log"),
-                rollingInterval: RollingInterval.Day,
+                path: Path.Combine(logsDirectory, logFileName),
                 outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
                 retainedFileCountLimit: 30)
-            .WriteTo.Debug()
             .CreateLogger();
 
         Logger.Information("=== WinRARRed Application Started ===");
@@ -198,7 +199,7 @@ public static class Log
     /// <param name="sender">The source object of the log message.</param>
     /// <param name="message">The log message text.</param>
     /// <param name="target">The target log panel (not used for verbose logging).</param>
-    public static void Verbose(object? sender, string message, LogTarget target = LogTarget.System)
+    public static void Verbose(object? sender, string message)
     {
         string senderName = sender?.GetType().Name ?? "Unknown";
         Logger.Verbose("[{Sender}] {Message}", senderName, message);
