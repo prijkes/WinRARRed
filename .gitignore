@@ -132,3 +132,6 @@ ehthumbs.db
 # Claude Code local preferences (personal, not shared)
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Ignore tools
+tools/
