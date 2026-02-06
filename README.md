@@ -2,6 +2,8 @@
 
 WinRARRed is a Windows utility that brute-forces WinRAR command line settings to recreate a bit-perfect RAR archive from its extracted files. It is aimed at preservation workflows where the original archive is missing but the payload files (and a verification hash) are intact.
 
+![alt text](doc\main_window.png)
+
 ## How it works
 
 1. Copies the release into a scratch folder (recreated on each run).
