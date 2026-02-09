@@ -63,6 +63,12 @@ public class RAROptions
     public bool StopOnFirstMatch { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether to complete all RAR volumes when a match is found.
+    /// When enabled, the matching RAR version is re-run without early termination so all volumes are created.
+    /// </summary>
+    public bool CompleteAllVolumes { get; set; }
+
+    /// <summary>
     /// Gets or sets expected CRC32 values for archived files (relative paths).
     /// </summary>
     public Dictionary<string, string> ArchiveFileCrcs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -181,6 +187,18 @@ public class RAROptions
     /// Auto-detected from SRR when the NEW_NUMBERING archive flag (0x0010) is NOT set.
     /// </summary>
     public bool UseOldVolumeNaming { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether to rename matched output files to their original RAR filenames from the SRR.
+    /// Only applies when StopOnFirstMatch is enabled.
+    /// </summary>
+    public bool RenameToOriginalNames { get; set; }
+
+    /// <summary>
+    /// Gets or sets the original RAR volume filenames from the SRR file.
+    /// Used for renaming matched output when RenameToOriginalNames is enabled.
+    /// </summary>
+    public List<string> OriginalRarFileNames { get; set; } = [];
 
     /// <summary>
     /// Returns true if patching is needed (Host OS differs from current platform).

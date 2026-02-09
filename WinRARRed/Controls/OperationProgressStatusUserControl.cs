@@ -59,7 +59,7 @@ public partial class OperationProgressStatusUserControl : UserControl
             }
             else if (e.NewStatus == OperationStatus.Completed && e.CompletionStatus == OperationCompletionStatus.Success)
             {
-                pbProgress.Value = 100;
+                SetProgressBarValueImmediate(100);
                 lblProgress.Text = "100%";
 
                 lblStatusOperationRemaining.Text = "-";
@@ -71,7 +71,7 @@ public partial class OperationProgressStatusUserControl : UserControl
 
         public void OperationProgressChanged(string operation, string? status, OperationProgressEventArgs e)
         {
-            pbProgress.Value = (int)e.Progress;
+            SetProgressBarValueImmediate((int)e.Progress);
             lblProgress.Text = $"{(int)e.Progress}%";
 
             lblStatusOperationSize.Text = e.OperationSize.ToString();
@@ -103,5 +103,29 @@ public partial class OperationProgressStatusUserControl : UserControl
             lblStatusOperationProgress.Text = "-";
 
             tbStatus.Clear();
-    }
+        }
+
+        /// <summary>
+        /// Sets the progress bar value without the Windows visual styles animation lag.
+        /// Briefly overshoots the value and sets it back, forcing an immediate repaint.
+        /// </summary>
+        private void SetProgressBarValueImmediate(int value)
+        {
+            if (value >= pbProgress.Maximum)
+            {
+                pbProgress.Maximum = value + 1;
+                pbProgress.Value = value + 1;
+                pbProgress.Maximum = value;
+                pbProgress.Value = value;
+            }
+            else if (value > 0)
+            {
+                pbProgress.Value = value + 1;
+                pbProgress.Value = value;
+            }
+            else
+            {
+                pbProgress.Value = 0;
+            }
+        }
 }

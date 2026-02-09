@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
@@ -7,50 +8,102 @@ namespace WinRARRed.Controls;
 
 /// <summary>
 /// A high-performance control for displaying hex data with highlighting support.
-/// Uses direct RTF generation instead of slow Selection* APIs.
-/// Limits display to first MaxDisplayBytes to prevent memory issues.
+/// Uses virtualized custom painting — only visible lines are drawn each frame.
 /// </summary>
 public class HexViewControl : UserControl
 {
-    private readonly RichTextBox _richTextBox;
+    private sealed class DoubleBufferedPanel : Panel
+    {
+        public DoubleBufferedPanel()
+        {
+            SetStyle(
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.UserPaint |
+                ControlStyles.ResizeRedraw,
+                true);
+        }
+    }
+
+    private static readonly string[] HexLookup = BuildHexLookup();
+    // Static brushes are intentional — they live for the process lifetime to avoid
+    // GDI handle churn during OnPaint. Windows reclaims them on process exit.
+    private static readonly SolidBrush DiffBrush = new(Color.FromArgb(255, 200, 200));
+    private static readonly SolidBrush SelectionBrush = new(Color.FromArgb(51, 153, 255));
+    private static readonly Color AddressColor = Color.Gray;
+    private static readonly Color HexColor = Color.Black;
+    private static readonly Color AsciiColor = Color.FromArgb(0, 100, 0);
+
+    private readonly DoubleBufferedPanel _panel;
+    private readonly VScrollBar _scrollBar;
+    private readonly Font _font;
+
     private byte[]? _data;
-    private byte[]? _fullData; // Keep reference to full file data for block extraction
-    private byte[]? _otherData; // Store reference for comparison instead of copying
-    private byte[]? _otherFullData; // Full comparison data for block mode
+    private byte[]? _fullData;
+    private byte[]? _otherData;
+    private byte[]? _otherFullData;
     private int _bytesPerLine = 16;
     private int _selectionStart = -1;
     private int _selectionLength = 0;
     private int _totalFileSize;
-    private long _blockStartOffset; // Offset in file where displayed block starts
-    private bool _blockViewMode; // True when showing only a block, not entire file
+    private long _blockStartOffset;
+    private bool _blockViewMode;
 
-    /// <summary>
-    /// Maximum bytes to display in hex view (default 64KB).
-    /// </summary>
-    public const int MaxDisplayBytes = 65536;
+    // Mouse selection state
+    private int _selectionAnchor = -1;
+    private bool _isDragging;
+    private int _caretIndex = -1;
+    private System.Windows.Forms.Timer? _autoScrollTimer;
+    private int _autoScrollDirection;
+    private ContextMenuStrip? _contextMenu;
 
-    /// <summary>
-    /// Gets or sets whether to show all data without the 64KB limit.
-    /// Warning: Large files may cause performance issues.
-    /// </summary>
-    public bool ShowAllData { get; set; }
+    // Reusable StringBuilder to avoid allocations during OnPaint
+    private readonly StringBuilder _paintBuffer = new(128);
+
+    // Cached metrics
+    private int _charWidth;
+    private int _lineHeight;
+    private int _bannerLineCount;
+
+    // Column X positions (in pixels)
+    private int _addressX;
+    private int _hexX;
+    private int _asciiX;
 
     public HexViewControl()
     {
-        _richTextBox = new RichTextBox
+        _font = new Font("Consolas", 9F, FontStyle.Regular);
+
+        _scrollBar = new VScrollBar
+        {
+            Dock = DockStyle.Right,
+            Minimum = 0,
+            Value = 0
+        };
+        _scrollBar.Scroll += OnScrollBarScroll;
+
+        _panel = new DoubleBufferedPanel
         {
             Dock = DockStyle.Fill,
-            Font = new Font("Consolas", 9F, FontStyle.Regular),
-            ReadOnly = true,
-            WordWrap = false,
-            ScrollBars = RichTextBoxScrollBars.Both,
             BackColor = Color.White,
-            BorderStyle = BorderStyle.None,
-            DetectUrls = false
+            Cursor = Cursors.IBeam
         };
+        _panel.Paint += OnPanelPaint;
+        _panel.MouseDown += OnPanelMouseDown;
+        _panel.MouseMove += OnPanelMouseMove;
+        _panel.MouseUp += OnPanelMouseUp;
+        _panel.Resize += OnPanelResize;
 
-        Controls.Add(_richTextBox);
+        _contextMenu = BuildContextMenu();
+        _panel.ContextMenuStrip = _contextMenu;
+
+        // WinForms docks in reverse Z-order: scrollbar (added last) docks right first,
+        // then panel fills the remaining space
+        Controls.Add(_panel);
+        Controls.Add(_scrollBar);
         BorderStyle = BorderStyle.FixedSingle;
+
+        CacheMetrics();
     }
 
     /// <summary>
@@ -64,6 +117,7 @@ public class HexViewControl : UserControl
             if (value > 0 && value != _bytesPerLine)
             {
                 _bytesPerLine = value;
+                CacheMetrics();
                 RefreshDisplay();
             }
         }
@@ -80,30 +134,22 @@ public class HexViewControl : UserControl
         _selectionLength = 0;
         _blockViewMode = false;
         _blockStartOffset = 0;
+        ResetMouseState();
 
         if (data == null)
         {
             _data = null;
             _fullData = null;
             _totalFileSize = 0;
-            _richTextBox.Clear();
+            _scrollBar.Value = 0;
+            _panel.Invalidate();
             return;
         }
 
         _fullData = data;
         _totalFileSize = data.Length;
 
-        // Limit display size to prevent memory issues (unless ShowAllData is enabled)
-        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
-        if (data.Length > maxBytes)
-        {
-            _data = new byte[maxBytes];
-            Array.Copy(data, _data, maxBytes);
-        }
-        else
-        {
-            _data = data;
-        }
+        _data = data;
 
         RefreshDisplay();
     }
@@ -118,7 +164,8 @@ public class HexViewControl : UserControl
     {
         if (_fullData == null || startOffset < 0 || startOffset >= _fullData.Length)
         {
-            _richTextBox.Clear();
+            _scrollBar.Value = 0;
+            _panel.Invalidate();
             return;
         }
 
@@ -126,16 +173,13 @@ public class HexViewControl : UserControl
         _blockStartOffset = startOffset;
         _selectionStart = -1;
         _selectionLength = 0;
+        ResetMouseState();
 
-        // Extract block data
         int actualLength = (int)Math.Min(length, _fullData.Length - startOffset);
-        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
-        actualLength = Math.Min(actualLength, maxBytes);
 
         _data = new byte[actualLength];
         Array.Copy(_fullData, startOffset, _data, 0, actualLength);
 
-        // Also extract comparison data for the same range if available
         if (_otherFullData != null && startOffset < _otherFullData.Length)
         {
             int otherLength = (int)Math.Min(actualLength, _otherFullData.Length - startOffset);
@@ -161,30 +205,13 @@ public class HexViewControl : UserControl
         _blockStartOffset = 0;
         _selectionStart = -1;
         _selectionLength = 0;
+        ResetMouseState();
 
-        int maxBytes = ShowAllData ? int.MaxValue : MaxDisplayBytes;
-        if (_fullData.Length > maxBytes)
-        {
-            _data = new byte[maxBytes];
-            Array.Copy(_fullData, _data, maxBytes);
-        }
-        else
-        {
-            _data = _fullData;
-        }
+        _data = _fullData;
 
-        // Restore full comparison data
         if (_otherFullData != null)
         {
-            if (_otherFullData.Length > maxBytes)
-            {
-                _otherData = new byte[maxBytes];
-                Array.Copy(_otherFullData, _otherData, maxBytes);
-            }
-            else
-            {
-                _otherData = _otherFullData;
-            }
+            _otherData = _otherFullData;
         }
 
         RefreshDisplay();
@@ -196,11 +223,15 @@ public class HexViewControl : UserControl
     public void Clear()
     {
         _data = null;
+        _fullData = null;
         _otherData = null;
+        _otherFullData = null;
         _totalFileSize = 0;
         _selectionStart = -1;
         _selectionLength = 0;
-        _richTextBox.Clear();
+        ResetMouseState();
+        _scrollBar.Value = 0;
+        _panel.Invalidate();
     }
 
     /// <summary>
@@ -216,18 +247,13 @@ public class HexViewControl : UserControl
             return;
         }
 
-        // Convert absolute file offset to display-relative offset
         long displayOffset = offset;
         if (_blockViewMode)
         {
-            // In block view mode, offset is absolute file position
-            // Convert to position relative to block start
             displayOffset = offset - _blockStartOffset;
 
-            // Check if selection is within the displayed block
             if (displayOffset < 0 || displayOffset >= _data.Length)
             {
-                // Selection is outside displayed block range
                 _selectionStart = -1;
                 _selectionLength = 0;
                 return;
@@ -235,9 +261,7 @@ public class HexViewControl : UserControl
         }
         else
         {
-            // In full file view, check against display limit
-            int maxBytes = ShowAllData ? _data.Length : MaxDisplayBytes;
-            if (displayOffset >= maxBytes)
+            if (displayOffset >= _data.Length)
             {
                 _selectionStart = -1;
                 _selectionLength = 0;
@@ -247,6 +271,10 @@ public class HexViewControl : UserControl
 
         _selectionStart = (int)displayOffset;
         _selectionLength = Math.Min(length, _data.Length - _selectionStart);
+        _selectionAnchor = _selectionStart;
+        _caretIndex = _selectionStart;
+        _isDragging = false;
+        StopAutoScroll();
         RefreshDisplay();
         ScrollToOffset(displayOffset);
     }
@@ -260,6 +288,7 @@ public class HexViewControl : UserControl
         {
             _selectionStart = -1;
             _selectionLength = 0;
+            ResetMouseState();
             RefreshDisplay();
         }
     }
@@ -272,22 +301,16 @@ public class HexViewControl : UserControl
         if (_data == null || _data.Length == 0) return;
         if (offset >= _data.Length) return;
 
-        int lineNumber = (int)(offset / _bytesPerLine);
-        int charIndex = GetCharIndexForLine(lineNumber);
+        int targetLine = (int)(offset / _bytesPerLine) + _bannerLineCount;
+        int visibleLines = GetVisibleLineCount();
 
-        if (charIndex >= 0 && charIndex < _richTextBox.TextLength)
-        {
-            _richTextBox.SelectionStart = charIndex;
-            _richTextBox.SelectionLength = 0;
-            _richTextBox.ScrollToCaret();
-        }
-    }
+        // Center the target line in the viewport
+        int scrollTo = Math.Max(0, targetLine - visibleLines / 2);
+        int maxScroll = _scrollBar.Maximum - _scrollBar.LargeChange + 1;
+        scrollTo = Math.Min(scrollTo, Math.Max(0, maxScroll));
 
-    private int GetCharIndexForLine(int lineNumber)
-    {
-        // Approximate - each line is roughly the same length
-        int lineLength = 8 + 2 + (_bytesPerLine * 3 - 1) + 3 + _bytesPerLine + 2;
-        return lineNumber * lineLength;
+        _scrollBar.Value = scrollTo;
+        _panel.Invalidate();
     }
 
     /// <summary>
@@ -295,16 +318,11 @@ public class HexViewControl : UserControl
     /// </summary>
     public void SetComparisonData(byte[]? otherData)
     {
-        _otherFullData = otherData; // Keep full reference for block extraction
+        _otherFullData = otherData;
 
         if (otherData == null)
         {
             _otherData = null;
-        }
-        else if (otherData.Length > MaxDisplayBytes)
-        {
-            _otherData = new byte[MaxDisplayBytes];
-            Array.Copy(otherData, _otherData, MaxDisplayBytes);
         }
         else
         {
@@ -319,191 +337,650 @@ public class HexViewControl : UserControl
     /// </summary>
     public void RefreshDisplay()
     {
-        if (_data == null || _data.Length == 0)
+        RecalculateScrollParameters();
+        _panel.Invalidate();
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+
+        if (_scrollBar.Maximum == 0) return;
+
+        int delta = SystemInformation.MouseWheelScrollLines;
+        int newValue = _scrollBar.Value - (e.Delta > 0 ? delta : -delta);
+        int maxScroll = _scrollBar.Maximum - _scrollBar.LargeChange + 1;
+        newValue = Math.Clamp(newValue, 0, Math.Max(0, maxScroll));
+
+        _scrollBar.Value = newValue;
+        _panel.Invalidate();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
         {
-            _richTextBox.Clear();
+            _autoScrollTimer?.Dispose();
+            _contextMenu?.Dispose();
+            _font.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    private void OnScrollBarScroll(object? sender, ScrollEventArgs e)
+    {
+        _panel.Invalidate();
+    }
+
+    private void OnPanelMouseDown(object? sender, MouseEventArgs e)
+    {
+        _panel.Focus();
+
+        if (e.Button == MouseButtons.Left)
+        {
+            int byteIndex = HitTestByte(e.Location);
+            if (byteIndex < 0)
+            {
+                _selectionStart = -1;
+                _selectionLength = 0;
+                ResetMouseState();
+                _panel.Invalidate();
+                return;
+            }
+
+            if ((Control.ModifierKeys & Keys.Shift) != 0 && _selectionAnchor >= 0)
+            {
+                // Shift+click: extend selection from anchor
+                ExtendSelectionTo(byteIndex);
+            }
+            else
+            {
+                // Normal click: start new selection at this byte
+                _selectionAnchor = byteIndex;
+                _caretIndex = byteIndex;
+                _selectionStart = byteIndex;
+                _selectionLength = 1;
+                _panel.Invalidate();
+            }
+
+            _isDragging = true;
+        }
+        else if (e.Button == MouseButtons.Right)
+        {
+            int byteIndex = HitTestByte(e.Location);
+            if (byteIndex >= 0 && !IsByteSelected(byteIndex))
+            {
+                // Right-click outside selection: move caret there
+                _selectionAnchor = byteIndex;
+                _caretIndex = byteIndex;
+                _selectionStart = byteIndex;
+                _selectionLength = 1;
+                _panel.Invalidate();
+            }
+        }
+    }
+
+    private void OnPanelMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (!_isDragging || _data == null) return;
+
+        // Check if mouse is above or below the panel for auto-scroll
+        if (e.Y < 0)
+        {
+            _autoScrollDirection = -1;
+            StartAutoScroll();
+        }
+        else if (e.Y >= _panel.ClientSize.Height)
+        {
+            _autoScrollDirection = 1;
+            StartAutoScroll();
+        }
+        else
+        {
+            StopAutoScroll();
+        }
+
+        int byteIndex = HitTestByteClamp(e.Location);
+        if (byteIndex >= 0)
+        {
+            ExtendSelectionTo(byteIndex);
+        }
+    }
+
+    private void OnPanelMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+        {
+            _isDragging = false;
+            StopAutoScroll();
+        }
+    }
+
+    private void OnPanelResize(object? sender, EventArgs e)
+    {
+        RecalculateScrollParameters();
+    }
+
+    /// <summary>
+    /// Maps a pixel position to a byte index within the current data.
+    /// Returns -1 if the position is outside the hex or ASCII columns.
+    /// </summary>
+    private int HitTestByte(Point pt)
+    {
+        if (_data == null || _data.Length == 0 || _lineHeight <= 0) return -1;
+
+        int firstVisibleLine = _scrollBar.Value;
+        int lineIdx = firstVisibleLine + pt.Y / _lineHeight;
+
+        if (lineIdx < _bannerLineCount) return -1;
+
+        int dataLine = lineIdx - _bannerLineCount;
+        int lineOffset = dataLine * _bytesPerLine;
+        if (lineOffset >= _data.Length) return -1;
+
+        int count = Math.Min(_bytesPerLine, _data.Length - lineOffset);
+        int byteInLine = -1;
+
+        // Check hex column
+        int hexEndX = _hexX + _bytesPerLine * 3 * _charWidth;
+        if (pt.X >= _hexX && pt.X < hexEndX)
+        {
+            byteInLine = (pt.X - _hexX) / (3 * _charWidth);
+        }
+
+        // Check ASCII column (skip leading pipe)
+        int pipeWidth = _charWidth;
+        int asciiStartX = _asciiX + pipeWidth;
+        int asciiEndX = asciiStartX + _bytesPerLine * _charWidth;
+        if (pt.X >= asciiStartX && pt.X < asciiEndX)
+        {
+            byteInLine = (pt.X - asciiStartX) / _charWidth;
+        }
+
+        if (byteInLine < 0 || byteInLine >= count) return -1;
+
+        return lineOffset + byteInLine;
+    }
+
+    /// <summary>
+    /// Like HitTestByte but clamps to the nearest valid byte for drag-beyond-edges.
+    /// </summary>
+    private int HitTestByteClamp(Point pt)
+    {
+        if (_data == null || _data.Length == 0 || _lineHeight <= 0) return -1;
+
+        int firstVisibleLine = _scrollBar.Value;
+        int lineIdx = firstVisibleLine + pt.Y / _lineHeight;
+
+        // Clamp to data range
+        lineIdx = Math.Max(_bannerLineCount, lineIdx);
+
+        int dataLine = lineIdx - _bannerLineCount;
+        int lineOffset = dataLine * _bytesPerLine;
+
+        if (lineOffset >= _data.Length)
+        {
+            return _data.Length - 1;
+        }
+
+        int count = Math.Min(_bytesPerLine, _data.Length - lineOffset);
+
+        int byteInLine;
+        // Determine byte-in-line from X, clamped to [0, count-1]
+        int hexEndX = _hexX + _bytesPerLine * 3 * _charWidth;
+        int pipeWidth = _charWidth;
+        int asciiStartX = _asciiX + pipeWidth;
+        int asciiEndX = asciiStartX + _bytesPerLine * _charWidth;
+
+        if (pt.X >= asciiStartX && pt.X < asciiEndX)
+        {
+            byteInLine = (pt.X - asciiStartX) / _charWidth;
+        }
+        else if (pt.X >= _hexX && pt.X < hexEndX)
+        {
+            byteInLine = (pt.X - _hexX) / (3 * _charWidth);
+        }
+        else if (pt.X < _hexX)
+        {
+            byteInLine = 0;
+        }
+        else
+        {
+            byteInLine = count - 1;
+        }
+
+        byteInLine = Math.Clamp(byteInLine, 0, count - 1);
+        return lineOffset + byteInLine;
+    }
+
+    private void ExtendSelectionTo(int byteIndex)
+    {
+        if (_selectionAnchor < 0) return;
+
+        _caretIndex = byteIndex;
+        _selectionStart = Math.Min(_selectionAnchor, byteIndex);
+        _selectionLength = Math.Abs(_selectionAnchor - byteIndex) + 1;
+        _panel.Invalidate();
+    }
+
+    private void StartAutoScroll()
+    {
+        if (_autoScrollTimer != null) return;
+
+        _autoScrollTimer = new System.Windows.Forms.Timer { Interval = 50 };
+        _autoScrollTimer.Tick += OnAutoScrollTick;
+        _autoScrollTimer.Start();
+    }
+
+    private void StopAutoScroll()
+    {
+        if (_autoScrollTimer == null) return;
+
+        _autoScrollTimer.Stop();
+        _autoScrollTimer.Tick -= OnAutoScrollTick;
+        _autoScrollTimer.Dispose();
+        _autoScrollTimer = null;
+        _autoScrollDirection = 0;
+    }
+
+    private void OnAutoScrollTick(object? sender, EventArgs e)
+    {
+        if (_data == null || !_isDragging)
+        {
+            StopAutoScroll();
             return;
         }
 
-        string rtf = BuildRtf();
-        _richTextBox.Rtf = rtf;
+        int maxScroll = _scrollBar.Maximum - _scrollBar.LargeChange + 1;
+        int newValue = Math.Clamp(_scrollBar.Value + _autoScrollDirection, 0, Math.Max(0, maxScroll));
+
+        if (newValue != _scrollBar.Value)
+        {
+            _scrollBar.Value = newValue;
+
+            // Extend selection to the edge byte in the scroll direction
+            int firstVisibleLine = _scrollBar.Value;
+            int visibleLines = GetVisibleLineCount();
+
+            int edgeLine;
+            if (_autoScrollDirection < 0)
+            {
+                edgeLine = firstVisibleLine - _bannerLineCount;
+            }
+            else
+            {
+                edgeLine = firstVisibleLine + visibleLines - 1 - _bannerLineCount;
+            }
+
+            int edgeOffset = edgeLine * _bytesPerLine;
+            if (_autoScrollDirection > 0)
+            {
+                edgeOffset += _bytesPerLine - 1;
+            }
+
+            edgeOffset = Math.Clamp(edgeOffset, 0, _data.Length - 1);
+            ExtendSelectionTo(edgeOffset);
+        }
     }
 
-    private string BuildRtf()
+    private void ResetMouseState()
     {
-        int displayLength = _data!.Length;
-        int totalLines = (displayLength + _bytesPerLine - 1) / _bytesPerLine;
+        _selectionAnchor = -1;
+        _caretIndex = -1;
+        _isDragging = false;
+        StopAutoScroll();
+    }
 
-        // Estimate capacity: ~80 chars per line base + extra for highlights
-        var rtf = new StringBuilder(totalLines * 100);
-
-        // RTF header with color table
-        rtf.Append(@"{\rtf1\ansi\deff0");
-        rtf.Append(@"{\fonttbl{\f0\fmodern Consolas;}}");
-        rtf.Append(@"{\colortbl;");
-        rtf.Append(@"\red0\green0\blue0;");           // 1: Black (default)
-        rtf.Append(@"\red128\green128\blue128;");     // 2: Gray (addresses)
-        rtf.Append(@"\red0\green100\blue0;");         // 3: Dark green (ASCII)
-        rtf.Append(@"\red255\green200\blue200;");     // 4: Light red (diff background)
-        rtf.Append(@"\red100\green149\blue237;");     // 5: Cornflower blue (selection bg)
-        rtf.Append(@"\red255\green255\blue255;");     // 6: White (selection fg)
-        rtf.Append('}');
-        rtf.Append(@"\f0\fs18 ");  // Font and size
-
-        // Show truncation notice if file is larger than display limit
-        if (_totalFileSize > MaxDisplayBytes && !_blockViewMode)
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.C))
         {
-            rtf.Append(@"\cf2 [Showing first ");
-            rtf.Append(MaxDisplayBytes / 1024);
-            rtf.Append(@" KB of ");
-            rtf.Append(_totalFileSize / 1024);
-            rtf.Append(@" KB]\cf1\par\par ");
+            CopySelectionAsHex();
+            return true;
         }
 
-        // Show block view notice
+        if (keyData == (Keys.Control | Keys.A))
+        {
+            SelectAll();
+            return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private void SelectAll()
+    {
+        if (_data == null || _data.Length == 0) return;
+
+        _selectionAnchor = 0;
+        _caretIndex = _data.Length - 1;
+        _selectionStart = 0;
+        _selectionLength = _data.Length;
+        _panel.Invalidate();
+    }
+
+    private void CopySelectionAsHex()
+    {
+        if (_data == null || _selectionStart < 0 || _selectionLength <= 0) return;
+
+        var sb = new StringBuilder(_selectionLength * 3);
+        int end = Math.Min(_selectionStart + _selectionLength, _data.Length);
+        for (int i = _selectionStart; i < end; i++)
+        {
+            if (i > _selectionStart) sb.Append(' ');
+            sb.Append(HexLookup[_data[i]]);
+        }
+
+        SetClipboardText(sb.ToString());
+    }
+
+    private void CopySelectionAsText()
+    {
+        if (_data == null || _selectionStart < 0 || _selectionLength <= 0) return;
+
+        var sb = new StringBuilder(_selectionLength);
+        int end = Math.Min(_selectionStart + _selectionLength, _data.Length);
+        for (int i = _selectionStart; i < end; i++)
+        {
+            byte b = _data[i];
+            sb.Append((b >= 32 && b < 127) ? (char)b : '.');
+        }
+
+        SetClipboardText(sb.ToString());
+    }
+
+    private static void SetClipboardText(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch (ExternalException)
+        {
+            // Clipboard may be locked by another process
+        }
+    }
+
+    private ContextMenuStrip BuildContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+
+        var copyHex = new ToolStripMenuItem("Copy as Hex", null, (_, _) => CopySelectionAsHex())
+        {
+            ShortcutKeyDisplayString = "Ctrl+C"
+        };
+        var copyText = new ToolStripMenuItem("Copy as Text", null, (_, _) => CopySelectionAsText());
+        var selectAll = new ToolStripMenuItem("Select All", null, (_, _) => SelectAll())
+        {
+            ShortcutKeyDisplayString = "Ctrl+A"
+        };
+
+        menu.Items.Add(copyHex);
+        menu.Items.Add(copyText);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(selectAll);
+
+        menu.Opening += (_, _) =>
+        {
+            bool hasSelection = _selectionStart >= 0 && _selectionLength > 0;
+            bool hasData = _data != null && _data.Length > 0;
+            copyHex.Enabled = hasSelection;
+            copyText.Enabled = hasSelection;
+            selectAll.Enabled = hasData;
+        };
+
+        return menu;
+    }
+
+    private void CacheMetrics()
+    {
+        // Measure a single character to get monospace dimensions
+        Size measured = TextRenderer.MeasureText("W", _font, new Size(int.MaxValue, int.MaxValue),
+            TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+        _charWidth = measured.Width;
+        _lineHeight = measured.Height;
+
+        // Layout:  ADDRESS  (gap)  HEX BYTES  (gap)  |ASCII|
+        // ADDRESS: 8 chars
+        // gap: 2 chars
+        // HEX: bytesPerLine * 3 - 1 chars (each byte "XX " except last)
+        // gap: 2 chars
+        // ASCII: 1 + bytesPerLine + 1 chars (|...|)
+        _addressX = 0;
+        _hexX = (8 + 2) * _charWidth;
+        _asciiX = (8 + 2 + _bytesPerLine * 3 - 1 + 2) * _charWidth;
+    }
+
+    private int GetVisibleLineCount()
+    {
+        if (_lineHeight <= 0) return 1;
+        return Math.Max(1, _panel.ClientSize.Height / _lineHeight);
+    }
+
+    private int GetTotalLineCount()
+    {
+        if (_data == null || _data.Length == 0) return 0;
+        return _bannerLineCount + (_data.Length + _bytesPerLine - 1) / _bytesPerLine;
+    }
+
+    private void RecalculateScrollParameters()
+    {
+        // Calculate banner lines
+        _bannerLineCount = 0;
+        if (_data != null)
+        {
+            if (_blockViewMode)
+                _bannerLineCount = 2;
+        }
+
+        int totalLines = GetTotalLineCount();
+        int visibleLines = GetVisibleLineCount();
+
+        if (totalLines <= visibleLines)
+        {
+            _scrollBar.Enabled = false;
+            _scrollBar.Maximum = 0;
+            _scrollBar.Value = 0;
+        }
+        else
+        {
+            _scrollBar.Enabled = true;
+            _scrollBar.LargeChange = visibleLines;
+            _scrollBar.SmallChange = 1;
+            // VScrollBar quirk: actual scrollable range is Maximum - LargeChange + 1
+            _scrollBar.Maximum = totalLines - 1 + (visibleLines - 1);
+
+            // Clamp current value
+            int maxScroll = _scrollBar.Maximum - _scrollBar.LargeChange + 1;
+            if (_scrollBar.Value > maxScroll)
+                _scrollBar.Value = Math.Max(0, maxScroll);
+        }
+    }
+
+    private void OnPanelPaint(object? sender, PaintEventArgs e)
+    {
+        if (_data == null || _data.Length == 0) return;
+
+        var g = e.Graphics;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+        int firstVisibleLine = _scrollBar.Value;
+        int visibleLines = GetVisibleLineCount();
+        int totalLines = GetTotalLineCount();
+        int lastVisibleLine = Math.Min(firstVisibleLine + visibleLines, totalLines);
+
+        var flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+
+        for (int lineIdx = firstVisibleLine; lineIdx < lastVisibleLine; lineIdx++)
+        {
+            int y = (lineIdx - firstVisibleLine) * _lineHeight;
+
+            // Banner lines
+            if (lineIdx < _bannerLineCount)
+            {
+                if (lineIdx == 0)
+                {
+                    string banner = GetBannerText();
+                    TextRenderer.DrawText(g, banner, _font, new Point(0, y), AddressColor, flags);
+                }
+                // lineIdx == 1 is blank separator
+                continue;
+            }
+
+            int dataLine = lineIdx - _bannerLineCount;
+            int offset = dataLine * _bytesPerLine;
+            int count = Math.Min(_bytesPerLine, _data.Length - offset);
+
+            // Address
+            long displayAddr = _blockViewMode ? _blockStartOffset + offset : offset;
+            TextRenderer.DrawText(g, displayAddr.ToString("X8"), _font,
+                new Point(_addressX, y), AddressColor, flags);
+
+            // Hex bytes with run-batching
+            DrawHexBytes(g, offset, count, y, flags);
+
+            // ASCII with run-batching
+            DrawAscii(g, offset, count, y, flags);
+        }
+    }
+
+    private string GetBannerText()
+    {
         if (_blockViewMode)
         {
-            rtf.Append(@"\cf2 [Block view: offset 0x");
-            rtf.Append(_blockStartOffset.ToString("X"));
-            rtf.Append(@", ");
-            rtf.Append(_data!.Length);
-            rtf.Append(@" bytes]\cf1\par\par ");
+            return $"[Block view: offset 0x{_blockStartOffset:X8}, {_data!.Length} bytes]";
         }
 
-        for (int line = 0; line < totalLines; line++)
+        return string.Empty;
+    }
+
+    private void DrawHexBytes(Graphics g, int offset, int count, int y, TextFormatFlags flags)
+    {
+        int i = 0;
+        while (i < _bytesPerLine)
         {
-            int offset = line * _bytesPerLine;
-            int count = Math.Min(_bytesPerLine, displayLength - offset);
-
-            // Address (gray) - show file offset, not block-relative offset
-            long displayOffset = _blockViewMode ? _blockStartOffset + offset : offset;
-            rtf.Append(@"\cf2 ");
-            rtf.Append(displayOffset.ToString("X8"));
-            rtf.Append(@"\cf1   ");
-
-            // Hex bytes - batch consecutive same-state bytes
-            int i = 0;
-            while (i < _bytesPerLine)
+            if (i < count)
             {
-                if (i < count)
+                int byteIndex = offset + i;
+                bool isDiff = IsByteDifferent(byteIndex);
+                bool isSelected = IsByteSelected(byteIndex);
+
+                // Find run of consecutive bytes with same highlight state
+                int runEnd = i + 1;
+                while (runEnd < count && runEnd < _bytesPerLine)
                 {
-                    int byteIndex = offset + i;
-                    bool isDiff = IsByteDifferent(byteIndex);
-                    bool isSelected = IsByteSelected(byteIndex);
-
-                    // Find run of bytes with same state
-                    int runEnd = i + 1;
-                    while (runEnd < count && runEnd < _bytesPerLine)
-                    {
-                        int nextIndex = offset + runEnd;
-                        bool nextDiff = IsByteDifferent(nextIndex);
-                        bool nextSel = IsByteSelected(nextIndex);
-                        if (nextDiff != isDiff || nextSel != isSelected)
-                            break;
-                        runEnd++;
-                    }
-
-                    // Apply formatting for run
-                    if (isSelected)
-                    {
-                        rtf.Append(@"\highlight5\cf6 ");
-                    }
-                    else if (isDiff)
-                    {
-                        rtf.Append(@"\highlight4\cf1 ");
-                    }
-
-                    // Output bytes in run
-                    for (int j = i; j < runEnd; j++)
-                    {
-                        rtf.Append(_data[offset + j].ToString("X2"));
-                        if (j < _bytesPerLine - 1)
-                            rtf.Append(' ');
-                    }
-
-                    if (isSelected || isDiff)
-                    {
-                        rtf.Append(@"\highlight0\cf1 ");
-                    }
-
-                    i = runEnd;
+                    int nextIndex = offset + runEnd;
+                    if (IsByteDifferent(nextIndex) != isDiff || IsByteSelected(nextIndex) != isSelected)
+                        break;
+                    runEnd++;
                 }
-                else
+
+                // Build the hex string for this run
+                _paintBuffer.Clear();
+                for (int j = i; j < runEnd; j++)
                 {
-                    rtf.Append("  ");
-                    if (i < _bytesPerLine - 1)
-                        rtf.Append(' ');
-                    i++;
+                    _paintBuffer.Append(HexLookup[_data![offset + j]]);
+                    if (j < _bytesPerLine - 1)
+                        _paintBuffer.Append(' ');
                 }
+
+                int x = _hexX + i * 3 * _charWidth;
+                string text = _paintBuffer.ToString();
+
+                // Draw background rect if highlighted
+                if (isSelected || isDiff)
+                {
+                    var brush = isSelected ? SelectionBrush : DiffBrush;
+                    Size textSize = TextRenderer.MeasureText(g, text, _font, new Size(int.MaxValue, int.MaxValue), flags);
+                    g.FillRectangle(brush, x, y, textSize.Width, _lineHeight);
+                }
+
+                Color fg = isSelected ? Color.White : HexColor;
+                TextRenderer.DrawText(g, text, _font, new Point(x, y), fg, flags);
+
+                i = runEnd;
             }
-
-            // ASCII (dark green)
-            rtf.Append(@"  \cf3 |");
-
-            i = 0;
-            while (i < _bytesPerLine)
+            else
             {
-                if (i < count)
-                {
-                    int byteIndex = offset + i;
-                    bool isDiff = IsByteDifferent(byteIndex);
-                    bool isSelected = IsByteSelected(byteIndex);
-
-                    // Find run of bytes with same state
-                    int runEnd = i + 1;
-                    while (runEnd < count && runEnd < _bytesPerLine)
-                    {
-                        int nextIndex = offset + runEnd;
-                        bool nextDiff = IsByteDifferent(nextIndex);
-                        bool nextSel = IsByteSelected(nextIndex);
-                        if (nextDiff != isDiff || nextSel != isSelected)
-                            break;
-                        runEnd++;
-                    }
-
-                    // Apply formatting for run
-                    if (isSelected)
-                    {
-                        rtf.Append(@"\highlight5\cf6 ");
-                    }
-                    else if (isDiff)
-                    {
-                        rtf.Append(@"\highlight4\cf3 ");
-                    }
-
-                    // Output ASCII chars in run
-                    for (int j = i; j < runEnd; j++)
-                    {
-                        byte b = _data[offset + j];
-                        char c = (b >= 32 && b < 127) ? (char)b : '.';
-
-                        // Escape special RTF characters
-                        if (c == '\\' || c == '{' || c == '}')
-                        {
-                            rtf.Append('\\');
-                        }
-                        rtf.Append(c);
-                    }
-
-                    if (isSelected || isDiff)
-                    {
-                        rtf.Append(@"\highlight0\cf3 ");
-                    }
-
-                    i = runEnd;
-                }
-                else
-                {
-                    rtf.Append(' ');
-                    i++;
-                }
+                // Padding for incomplete lines — skip, just leave blank
+                i++;
             }
-
-            rtf.Append(@"|\cf1\par ");
         }
 
-        rtf.Append('}');
-        return rtf.ToString();
+        // Draw caret outline in hex column
+        if (_caretIndex >= 0 && _caretIndex >= offset && _caretIndex < offset + count)
+        {
+            int caretCol = _caretIndex - offset;
+            int cx = _hexX + caretCol * 3 * _charWidth;
+            int cw = 2 * _charWidth; // "XX" width (no trailing space)
+            DrawCaretOutline(g, cx, y, cw, _lineHeight);
+        }
+    }
+
+    private void DrawAscii(Graphics g, int offset, int count, int y, TextFormatFlags flags)
+    {
+        // Draw leading pipe
+        TextRenderer.DrawText(g, "|", _font, new Point(_asciiX, y), AsciiColor, flags);
+
+        int pipeWidth = _charWidth;
+        int i = 0;
+        while (i < _bytesPerLine)
+        {
+            if (i < count)
+            {
+                int byteIndex = offset + i;
+                bool isDiff = IsByteDifferent(byteIndex);
+                bool isSelected = IsByteSelected(byteIndex);
+
+                int runEnd = i + 1;
+                while (runEnd < count && runEnd < _bytesPerLine)
+                {
+                    int nextIndex = offset + runEnd;
+                    if (IsByteDifferent(nextIndex) != isDiff || IsByteSelected(nextIndex) != isSelected)
+                        break;
+                    runEnd++;
+                }
+
+                _paintBuffer.Clear();
+                for (int j = i; j < runEnd; j++)
+                {
+                    byte b = _data![offset + j];
+                    _paintBuffer.Append((b >= 32 && b < 127) ? (char)b : '.');
+                }
+
+                int x = _asciiX + pipeWidth + i * _charWidth;
+                string text = _paintBuffer.ToString();
+
+                if (isSelected || isDiff)
+                {
+                    var brush = isSelected ? SelectionBrush : DiffBrush;
+                    Size textSize = TextRenderer.MeasureText(g, text, _font, new Size(int.MaxValue, int.MaxValue), flags);
+                    g.FillRectangle(brush, x, y, textSize.Width, _lineHeight);
+                }
+
+                Color fg = isSelected ? Color.White : AsciiColor;
+                TextRenderer.DrawText(g, text, _font, new Point(x, y), fg, flags);
+
+                i = runEnd;
+            }
+            else
+            {
+                // Padding space for incomplete lines
+                i++;
+            }
+        }
+
+        // Draw caret outline in ASCII column
+        if (_caretIndex >= 0 && _caretIndex >= offset && _caretIndex < offset + count)
+        {
+            int caretCol = _caretIndex - offset;
+            int cx = _asciiX + pipeWidth + caretCol * _charWidth;
+            DrawCaretOutline(g, cx, y, _charWidth, _lineHeight);
+        }
+
+        // Draw trailing pipe at fixed position (end of full line width)
+        int closePipeX = _asciiX + pipeWidth + _bytesPerLine * _charWidth;
+        TextRenderer.DrawText(g, "|", _font, new Point(closePipeX, y), AsciiColor, flags);
     }
 
     private bool IsByteDifferent(int index)
@@ -519,6 +996,22 @@ public class HexViewControl : UserControl
         return _selectionStart >= 0 &&
                index >= _selectionStart &&
                index < _selectionStart + _selectionLength;
+    }
+
+    private static void DrawCaretOutline(Graphics g, int x, int y, int width, int height)
+    {
+        using var pen = new Pen(Color.Black, 1);
+        g.DrawRectangle(pen, x, y, width - 1, height - 1);
+    }
+
+    private static string[] BuildHexLookup()
+    {
+        var table = new string[256];
+        for (int i = 0; i < 256; i++)
+        {
+            table[i] = i.ToString("X2");
+        }
+        return table;
     }
 }
 

@@ -735,80 +735,210 @@ public partial class Manager
                 finalArguments.Add($"-z{CommentFilePath}");
             }
 
-            // Run RAR with inputFilesDir as working directory, output to rarOutputDir
-            await RARCompressDirectoryAsync(rarExeFilePath, inputFilesDir, rarFilePath, finalArguments, CancellationTokenSource.Token);
+            // ---- Execute RAR ----
+            // When CompleteAllVolumes is enabled, we start RAR without auto-kill and check
+            // the CRC while it's still running. If the first volume matches, we let RAR
+            // finish creating all volumes. If it doesn't match, we kill RAR immediately.
+            Task<int>? runningProcessTask = null;
+            CancellationTokenSource? processCts = null;
 
-            currentProgress++;
-            FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
-
-            // Check if RAR file or volume files were created
-            string? actualRarFilePath = FindCreatedRARFile(rarFilePath);
-            if (actualRarFilePath == null)
+            try
             {
-                Log.Write(this, $"RAR file was not created: {rarFilePath}", LogTarget.Phase2);
-                continue;
-            }
-
-            // Log what file was actually created (may be different from expected if volumes were created)
-            if (actualRarFilePath != rarFilePath)
-            {
-                Log.Debug(this, $"Actual file created: {actualRarFilePath} (expected: {Path.GetFileName(rarFilePath)})", LogTarget.Phase2);
-            }
-
-            // Apply Host OS patching if needed (Host OS differs from current platform)
-            if (options.RAROptions.NeedsHostOSPatching)
-            {
-                PatchRARFilesHostOS(actualRarFilePath, options.RAROptions);
-            }
-
-            string hash = options.HashType switch
-            {
-                HashType.SHA1 => SHA1.Calculate(actualRarFilePath),
-                HashType.CRC32 => CRC32.Calculate(actualRarFilePath),
-                _ => throw new IndexOutOfRangeException(nameof(options.HashType))
-            };
-
-            Log.Write(this, $"Hash for {actualRarFilePath}: {hash} (match: {options.Hashes.Contains(hash)})", LogTarget.Phase2);
-
-            // Track if we've seen this hash before (to avoid keeping duplicates)
-            bool isDuplicateHash = fileHashes.Contains(hash);
-            fileHashes.Add(hash);
-
-            if (!options.Hashes.Contains(hash))
-            {
-                if (options.RAROptions.DeleteRARFiles)
+                if (options.RAROptions.CompleteAllVolumes)
                 {
-                    // Delete all non-matching files
-                    DeleteRARFileAndVolumes(actualRarFilePath);
+                    // Start RAR without automatic early termination
+                    processCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationTokenSource.Token);
+
+                    RARProcess process = new(rarExeFilePath, inputFilesDir, rarFilePath, finalArguments)
+                    {
+                        LogTarget = LogTarget.Phase2
+                    };
+                    process.ProcessStatusChanged += Process_ProcessStatusChanged;
+                    process.ProcessOutput += Process_ProcessOutput;
+                    process.CompressionStatusChanged += Process_CompressionStatusChanged;
+                    process.CompressionProgress += Process_CompressionProgress;
+
+                    runningProcessTask = process.RunAsync(processCts.Token);
+
+                    // Wait for first volume to complete (second volume appearing means first is done)
+                    using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationTokenSource.Token);
+                    Task monitorTask = MonitorForSecondVolumeAsync(rarFilePath, monitorCts);
+                    await Task.WhenAny(runningProcessTask, monitorTask);
+
+                    // Clean up monitor if process finished before second volume appeared
+                    if (!monitorTask.IsCompleted)
+                        monitorCts.Cancel();
                 }
-                else if (options.RAROptions.DeleteDuplicateCRCFiles && isDuplicateHash)
+                else
                 {
-                    // Delete duplicates to save disk space (only keep unique CRC files)
-                    Log.Debug(this, $"Deleting duplicate hash file: {actualRarFilePath} (hash: {hash})", LogTarget.Phase2);
-                    DeleteRARFileAndVolumes(actualRarFilePath);
+                    // Standard: run with early termination (kills RAR after first volume is complete)
+                    await RARCompressDirectoryAsync(rarExeFilePath, inputFilesDir, rarFilePath, finalArguments, CancellationTokenSource.Token);
                 }
-                // If DeleteRARFiles is false and (DeleteDuplicateCRCFiles is false or not a duplicate), keep for debugging
 
-                continue;
+                currentProgress++;
+                FireBruteForceProgress(new(options.ReleaseDirectoryPath, rarVersionDirectoryPath, joinedArguments, totalProgressSize, currentProgress, bruteForceStartDateTime));
+
+                // Check if RAR file or volume files were created
+                string? actualRarFilePath = FindCreatedRARFile(rarFilePath);
+                if (actualRarFilePath == null)
+                {
+                    Log.Write(this, $"RAR file was not created: {rarFilePath}", LogTarget.Phase2);
+                    if (runningProcessTask != null && !runningProcessTask.IsCompleted)
+                    {
+                        processCts!.Cancel();
+                        await Task.WhenAny(runningProcessTask, Task.Delay(1000));
+                    }
+                    continue;
+                }
+
+                // Log what file was actually created (may be different from expected if volumes were created)
+                if (actualRarFilePath != rarFilePath)
+                {
+                    Log.Debug(this, $"Actual file created: {actualRarFilePath} (expected: {Path.GetFileName(rarFilePath)})", LogTarget.Phase2);
+                }
+
+                // Apply Host OS patching to first volume only (other volumes may still be in progress)
+                if (options.RAROptions.NeedsHostOSPatching)
+                {
+                    PatchRARFilesHostOS(actualRarFilePath, options.RAROptions, allVolumes: false);
+                }
+
+                string hash = options.HashType switch
+                {
+                    HashType.SHA1 => SHA1.Calculate(actualRarFilePath),
+                    HashType.CRC32 => CRC32.Calculate(actualRarFilePath),
+                    _ => throw new IndexOutOfRangeException(nameof(options.HashType))
+                };
+
+                Log.Write(this, $"Hash for {actualRarFilePath}: {hash} (match: {options.Hashes.Contains(hash)})", LogTarget.Phase2);
+
+                // Track if we've seen this hash before (to avoid keeping duplicates)
+                bool isDuplicateHash = fileHashes.Contains(hash);
+                fileHashes.Add(hash);
+
+                if (!options.Hashes.Contains(hash))
+                {
+                    // No match - kill background RAR process if still running
+                    if (runningProcessTask != null && !runningProcessTask.IsCompleted)
+                    {
+                        processCts!.Cancel();
+                        await Task.WhenAny(runningProcessTask, Task.Delay(1000));
+                    }
+
+                    if (options.RAROptions.DeleteRARFiles)
+                    {
+                        // Delete all non-matching files
+                        DeleteRARFileAndVolumes(actualRarFilePath);
+                    }
+                    else if (options.RAROptions.DeleteDuplicateCRCFiles && isDuplicateHash)
+                    {
+                        // Delete duplicates to save disk space (only keep unique CRC files)
+                        Log.Debug(this, $"Deleting duplicate hash file: {actualRarFilePath} (hash: {hash})", LogTarget.Phase2);
+                        DeleteRARFileAndVolumes(actualRarFilePath);
+                    }
+                    // If DeleteRARFiles is false and (DeleteDuplicateCRCFiles is false or not a duplicate), keep for debugging
+
+                    continue;
+                }
+
+                // ---- MATCH FOUND ----
+
+                // If RAR is still running (CompleteAllVolumes), let it finish creating all volumes
+                if (runningProcessTask != null && !runningProcessTask.IsCompleted)
+                {
+                    Log.Information(this, "Match found, completing all volumes...", LogTarget.System);
+                    await runningProcessTask;
+                }
+
+                // Log match to System tab for visibility
+                string patchedNote = options.RAROptions.NeedsHostOSPatching ? " (patched)" : "";
+                Log.Information(this, $"*** MATCH FOUND{patchedNote}! ***", LogTarget.System);
+                Log.Information(this, $"  Version: {rarVersionDirectoryName}", LogTarget.System);
+                Log.Information(this, $"  Params:  {joinedArguments}", LogTarget.System);
+                Log.Information(this, $"  Hash:    {hash}", LogTarget.System);
+                Log.Information(this, $"  RAR:     {actualRarFilePath}", LogTarget.System);
+
+                if (options.RAROptions.NeedsHostOSPatching)
+                {
+                    var opts = options.RAROptions;
+                    string hostOS = opts.DetectedFileHostOS.HasValue
+                        ? $"{RARPatcher.GetHostOSName(opts.DetectedFileHostOS.Value)} (0x{opts.DetectedFileHostOS.Value:X2})"
+                        : "N/A";
+                    Log.Information(this, $"  Patched: Host OS -> {hostOS}, Attributes -> 0x{opts.DetectedFileAttributes ?? 0:X8}", LogTarget.System);
+
+                    if (opts.DetectedCmtHostOS.HasValue || opts.DetectedCmtFileTime.HasValue || opts.DetectedCmtFileAttributes.HasValue)
+                    {
+                        var cmtParts = new List<string>();
+                        if (opts.DetectedCmtHostOS.HasValue)
+                            cmtParts.Add($"Host OS -> {RARPatcher.GetHostOSName(opts.DetectedCmtHostOS.Value)} (0x{opts.DetectedCmtHostOS.Value:X2})");
+                        if (opts.DetectedCmtFileTime.HasValue)
+                            cmtParts.Add($"File Time -> 0x{opts.DetectedCmtFileTime.Value:X8}");
+                        if (opts.DetectedCmtFileAttributes.HasValue)
+                            cmtParts.Add($"Attributes -> 0x{opts.DetectedCmtFileAttributes.Value:X8}");
+                        Log.Information(this, $"  CMT:     {string.Join(", ", cmtParts)}", LogTarget.System);
+                    }
+
+                    Log.Information(this, "  Note:    RAR output was patched post-creation to match original headers", LogTarget.System);
+                }
+
+                // Move files to output directory
+                string baseName = Path.GetFileNameWithoutExtension(rarFilePath);
+                string patchedBaseName = options.RAROptions.NeedsHostOSPatching ? baseName + "-os-patched" : baseName;
+                var originalNames = options.RAROptions.OriginalRarFileNames;
+                bool useOriginalNames = options.RAROptions.RenameToOriginalNames &&
+                                        options.RAROptions.StopOnFirstMatch &&
+                                        originalNames.Count > 0;
+
+                if (options.RAROptions.CompleteAllVolumes)
+                {
+                    // Re-find all volumes now that RAR has completed
+                    string? completedRarFilePath = FindCreatedRARFile(rarFilePath);
+                    if (completedRarFilePath != null)
+                    {
+                        // Patch remaining volumes (first volume already patched - will be no-op for it)
+                        if (options.RAROptions.NeedsHostOSPatching)
+                        {
+                            PatchRARFilesHostOS(completedRarFilePath, options.RAROptions);
+                        }
+
+                        // Move all volumes to output directory
+                        List<string> allVolumes = GetAllVolumeFiles(completedRarFilePath);
+
+                        for (int i = 0; i < allVolumes.Count; i++)
+                        {
+                            string outputFileName = useOriginalNames && i < originalNames.Count
+                                ? Path.GetFileName(originalNames[i])
+                                : Path.GetFileName(allVolumes[i]).Replace(baseName, patchedBaseName);
+                            string outputPath = Path.Combine(options.OutputDirectoryPath, outputFileName);
+                            if (!File.Exists(outputPath))
+                            {
+                                File.Move(allVolumes[i], outputPath);
+                                Log.Information(this, $"  Volume: {outputFileName}", LogTarget.System);
+                            }
+                        }
+
+                        Log.Information(this, $"  Completed {allVolumes.Count} volume(s)", LogTarget.System);
+                    }
+                }
+                else
+                {
+                    // Standard behavior: just move the first .rar file
+                    string outputFileName = useOriginalNames
+                        ? Path.GetFileName(originalNames[0])
+                        : Path.GetFileName(actualRarFilePath).Replace(baseName, patchedBaseName);
+                    string outputPath = Path.Combine(options.OutputDirectoryPath, outputFileName);
+                    if (!File.Exists(outputPath))
+                    {
+                        File.Move(actualRarFilePath, outputPath);
+                    }
+                }
+
+                return (true, currentProgress);
             }
-
-            // Log match to System tab for visibility
-            string patchedNote = options.RAROptions.NeedsHostOSPatching ? " (patched)" : "";
-            Log.Information(this, $"*** MATCH FOUND{patchedNote}! ***", LogTarget.System);
-            Log.Information(this, $"  Version: {rarVersionDirectoryName}", LogTarget.System);
-            Log.Information(this, $"  Params:  {joinedArguments}", LogTarget.System);
-            Log.Information(this, $"  Hash:    {hash}", LogTarget.System);
-            Log.Information(this, $"  RAR:     {actualRarFilePath}", LogTarget.System);
-
-            string releaseName = Path.GetFileName(options.ReleaseDirectoryPath);
-            string releaseRarFileName = $"{releaseName}.rar";
-            string releaseRarFilePath = Path.Combine(options.OutputDirectoryPath, releaseRarFileName);
-            if (!File.Exists(releaseRarFilePath))
+            finally
             {
-                File.Move(actualRarFilePath, releaseRarFilePath);
+                processCts?.Dispose();
             }
-
-            return (true, currentProgress);
         }
 
         return (false, currentProgress);
@@ -1294,7 +1424,7 @@ public partial class Manager
         }
     }
 
-    private void PatchRARFilesHostOS(string rarFilePath, RAROptions rarOptions)
+    private void PatchRARFilesHostOS(string rarFilePath, RAROptions rarOptions, bool allVolumes = true)
     {
         if (!rarOptions.EnableHostOSPatching || !rarOptions.DetectedFileHostOS.HasValue)
         {
@@ -1303,8 +1433,8 @@ public partial class Manager
 
         try
         {
-            // Collect all volume files to patch
-            List<string> filesToPatch = GetAllVolumeFiles(rarFilePath);
+            // Collect files to patch (all volumes or just the specified file)
+            List<string> filesToPatch = allVolumes ? GetAllVolumeFiles(rarFilePath) : [rarFilePath];
             string hostOSName = RARPatcher.GetHostOSName(rarOptions.DetectedFileHostOS.Value);
 
             Log.Information(this, $"Patching to match SRR: Host OS={hostOSName} (0x{rarOptions.DetectedFileHostOS.Value:X2}), Attrs=0x{rarOptions.DetectedFileAttributes ?? 0:X8} for {filesToPatch.Count} file(s)", LogTarget.Phase2);
@@ -1385,10 +1515,13 @@ public partial class Manager
             files.Add(mainRar);
         }
 
+        // .r?? matches .r00-.r99 but also .rar - exclude .rar to avoid duplicates
         string[] rxxFiles = Directory.GetFiles(directory, $"{baseName}.r??");
         if (rxxFiles.Length > 0)
         {
-            files.AddRange(rxxFiles.OrderBy(f => f));
+            files.AddRange(rxxFiles
+                .Where(f => !f.EndsWith(".rar", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(f => f));
         }
 
         // If no volumes found, just return the original file

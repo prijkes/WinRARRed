@@ -442,7 +442,7 @@ public class RARDetailedParser
                 Name = "Data",
                 Offset = dataStart,
                 Length = (int)Math.Min(block.DataSize, int.MaxValue),
-                Value = $"{block.DataSize:N0} bytes at offset 0x{dataStart:X}"
+                Value = $"{block.DataSize:N0} bytes at offset 0x{dataStart:X8}"
             });
         }
     }
@@ -1426,7 +1426,7 @@ public class RARDetailedParser
                 Name = "Data",
                 Offset = dataStart,
                 Length = (int)Math.Min(block.DataSize, int.MaxValue),
-                Value = $"{block.DataSize:N0} bytes at offset 0x{dataStart:X}"
+                Value = $"{block.DataSize:N0} bytes at offset 0x{dataStart:X8}"
             });
         }
     }
@@ -1532,7 +1532,7 @@ public class RARDetailedParser
                         Offset = vintStart,
                         Length = vintLen,
                         Value = qOpenOffset == 0 ? "0 (not available)" : $"{qOpenOffset}",
-                        Description = qOpenOffset != 0 ? $"Absolute: 0x{qOpenOffset + (ulong)block.StartOffset:X}" : null
+                        Description = qOpenOffset != 0 ? $"Absolute: 0x{qOpenOffset + (ulong)block.StartOffset:X8}" : null
                     });
                 }
 
@@ -1547,7 +1547,7 @@ public class RARDetailedParser
                         Offset = vintStart,
                         Length = vintLen,
                         Value = rrOffset == 0 ? "0 (not available)" : $"{rrOffset}",
-                        Description = rrOffset != 0 ? $"Absolute: 0x{rrOffset + (ulong)block.StartOffset:X}" : null
+                        Description = rrOffset != 0 ? $"Absolute: 0x{rrOffset + (ulong)block.StartOffset:X8}" : null
                     });
                 }
 

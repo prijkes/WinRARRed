@@ -33,7 +33,6 @@ partial class FileCompareForm
         refreshToolStripMenuItem = new ToolStripMenuItem();
         toolStripSeparator3 = new ToolStripSeparator();
         showHexViewToolStripMenuItem = new ToolStripMenuItem();
-        showAllHexDataToolStripMenuItem = new ToolStripMenuItem();
         statusStrip = new StatusStrip();
         statusLabel = new ToolStripStatusLabel();
         topPanel = new Panel();
@@ -149,7 +148,7 @@ partial class FileCompareForm
         // 
         // viewToolStripMenuItem
         // 
-        viewToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { refreshToolStripMenuItem, toolStripSeparator3, showHexViewToolStripMenuItem, showAllHexDataToolStripMenuItem });
+        viewToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { refreshToolStripMenuItem, toolStripSeparator3, showHexViewToolStripMenuItem });
         viewToolStripMenuItem.Name = "viewToolStripMenuItem";
         viewToolStripMenuItem.Size = new Size(44, 20);
         viewToolStripMenuItem.Text = "&View";
@@ -177,17 +176,7 @@ partial class FileCompareForm
         showHexViewToolStripMenuItem.Size = new Size(213, 22);
         showHexViewToolStripMenuItem.Text = "Show &Hex View";
         showHexViewToolStripMenuItem.Click += ShowHexViewToolStripMenuItem_Click;
-        // 
-        // showAllHexDataToolStripMenuItem
-        // 
-        showAllHexDataToolStripMenuItem.CheckOnClick = true;
-        showAllHexDataToolStripMenuItem.Name = "showAllHexDataToolStripMenuItem";
-        showAllHexDataToolStripMenuItem.ShortcutKeys = Keys.Control | Keys.A;
-        showAllHexDataToolStripMenuItem.Size = new Size(213, 22);
-        showAllHexDataToolStripMenuItem.Text = "Show &All Hex Data";
-        showAllHexDataToolStripMenuItem.ToolTipText = "Show all hex data without 64KB limit (may be slow for large files)";
-        showAllHexDataToolStripMenuItem.Click += ShowAllHexDataToolStripMenuItem_Click;
-        // 
+        //
         // statusStrip
         // 
         statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel });
@@ -471,7 +460,6 @@ partial class FileCompareForm
         hexViewLeft.Dock = DockStyle.Fill;
         hexViewLeft.Location = new Point(3, 19);
         hexViewLeft.Name = "hexViewLeft";
-        hexViewLeft.ShowAllData = false;
         hexViewLeft.Size = new Size(692, 264);
         hexViewLeft.TabIndex = 0;
         // 
@@ -493,7 +481,6 @@ partial class FileCompareForm
         hexViewRight.Dock = DockStyle.Fill;
         hexViewRight.Location = new Point(3, 19);
         hexViewRight.Name = "hexViewRight";
-        hexViewRight.ShowAllData = false;
         hexViewRight.Size = new Size(692, 264);
         hexViewRight.TabIndex = 0;
         // 
@@ -562,7 +549,6 @@ partial class FileCompareForm
     private ToolStripMenuItem refreshToolStripMenuItem;
     private ToolStripSeparator toolStripSeparator3;
     private ToolStripMenuItem showHexViewToolStripMenuItem;
-    private ToolStripMenuItem showAllHexDataToolStripMenuItem;
     private StatusStrip statusStrip;
     private ToolStripStatusLabel statusLabel;
     private Panel topPanel;

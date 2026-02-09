@@ -21,6 +21,7 @@ public partial class FileInspectorForm : Form
     private RARDetailedBlock? _currentDetailedBlock;
     private List<TreeNode>? _allTreeNodes;
 
+
     public FileInspectorForm()
     {
         InitializeComponent();
@@ -227,9 +228,10 @@ public partial class FileInspectorForm : Form
         for (int i = 0; i < detailedBlocks.Count; i++)
         {
             var block = detailedBlocks[i];
-            string blockLabel = $"[{i}] {block.BlockType}";
+            string blockType = block.HasData && block.BlockType.Contains("File") ? "File Data" : block.BlockType;
+            string blockLabel = $"[{i}] {blockType}";
             if (!string.IsNullOrEmpty(block.ItemName))
-                blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+                blockLabel = $"[{i}] {blockType}: {block.ItemName}";
 
             var blockNode = rootNode.Nodes.Add(blockLabel);
             blockNode.Tag = block;
@@ -299,9 +301,10 @@ public partial class FileInspectorForm : Form
                     for (int i = 0; i < detailedBlocks.Count; i++)
                     {
                         var block = detailedBlocks[i];
-                        string blockLabel = $"[{i}] {block.BlockType}";
+                        string blockType = block.HasData && block.BlockType.Contains("File") ? "File Data" : block.BlockType;
+                        string blockLabel = $"[{i}] {blockType}";
                         if (!string.IsNullOrEmpty(block.ItemName))
-                            blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+                            blockLabel = $"[{i}] {blockType}: {block.ItemName}";
 
                         var blockNode = volNode.Nodes.Add(blockLabel);
                         blockNode.Tag = block;
@@ -337,25 +340,6 @@ public partial class FileInspectorForm : Form
 
         rootNode.Expand();
     }
-
-    private void AddArchiveInfoToList(RARArchiveHeader header)
-    {
-        listView.Items.Clear();
-        AddListItem("Format", "RAR 4.x");
-        AddListItem("Block Position", $"0x{header.BlockPosition:X}");
-        AddListItem("Header CRC", $"0x{header.HeaderCrc:X4}");
-        AddListItem("Header Size", $"{header.HeaderSize} bytes");
-        AddListItem("Flags (Raw)", $"0x{(ushort)header.Flags:X4}");
-        AddListItem("CRC Valid", header.CrcValid ? "Yes" : "No");
-        AddListItem("Volume", header.IsVolume ? "Yes" : "No");
-        AddListItem("Solid", header.IsSolid ? "Yes" : "No");
-        AddListItem("Recovery Record", header.HasRecoveryRecord ? "Yes" : "No");
-        AddListItem("Locked", header.IsLocked ? "Yes" : "No");
-        AddListItem("First Volume", header.IsFirstVolume ? "Yes" : "No");
-        AddListItem("New Volume Naming", header.HasNewVolumeNaming ? "Yes" : "No");
-        AddListItem("Encrypted Headers", header.HasEncryptedHeaders ? "Yes" : "No");
-    }
-
 
     private void AddSRRInfoToList(SRRFile srr)
     {
@@ -445,7 +429,7 @@ public partial class FileInspectorForm : Form
         {
             _currentDetailedBlock = detailedBlock;
             ShowDetailedBlockInfo(detailedBlock);
-            HighlightBlockInHexView(detailedBlock.StartOffset, (int)detailedBlock.TotalSize);
+            HighlightBlockInHexView(detailedBlock.StartOffset, detailedBlock.TotalSize);
         }
         else if (e.Node?.Tag is SrrHeaderBlock srrHeader)
         {
@@ -629,11 +613,38 @@ public partial class FileInspectorForm : Form
 
             AddListItem(field.Name, value);
 
-            // Flag children indented
+            // Children indented, inherit parent offset if they don't have their own
             foreach (var child in field.Children)
             {
-                AddListItem($"  {child.Name}", child.Value);
+                string childKey = $"  {child.Name}";
+                long childOffset = child.Length > 0 ? child.Offset : field.Offset;
+                int childLength = child.Length > 0 ? child.Length : field.Length;
+
+                if (childLength > 0)
+                {
+                    _propertyOffsets[childKey] = new ByteRange
+                    {
+                        PropertyName = childKey,
+                        Offset = childOffset,
+                        Length = childLength
+                    };
+                }
+
+                AddListItem(childKey, child.Value);
             }
+        }
+
+        // Add data row for blocks with packed data (skip if fields already include one)
+        if (block.HasData && block.DataSize > 0 && !_propertyOffsets.ContainsKey("Data"))
+        {
+            long dataOffset = block.StartOffset + block.HeaderSize;
+            _propertyOffsets["Data"] = new ByteRange
+            {
+                PropertyName = "Data",
+                Offset = dataOffset,
+                Length = (int)Math.Min(block.DataSize, int.MaxValue)
+            };
+            AddListItem("Data", $"{block.DataSize:N0} bytes (offset 0x{dataOffset:X8})");
         }
     }
 

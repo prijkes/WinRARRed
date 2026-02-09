@@ -37,6 +37,9 @@ public partial class SettingsOptionsForm : Form
     // Volume naming - detected from archive header flags
     private bool? DetectedHasNewVolumeNaming = null;
 
+    // Original RAR filenames from SRR
+    private List<string> ImportedOriginalRarFileNames = [];
+
     public SettingsOptionsForm()
     {
         InitializeComponent();
@@ -148,6 +151,8 @@ public partial class SettingsOptionsForm : Form
         toolTip.SetToolTip(cbDeleteRARFiles, "Delete non-matching RAR files after testing. Saves disk space during brute force.");
         toolTip.SetToolTip(cbDeleteDuplicateCRCFiles, "Delete RAR files with duplicate CRC32 values. Only available when not deleting all non-matching files.");
         toolTip.SetToolTip(cbStopOnFirstMatch, "Stop brute-forcing after finding the first matching RAR file.");
+        toolTip.SetToolTip(cbCompleteAllVolumes, "When a match is found, let RAR finish creating all volume files instead of only the first volume.");
+        toolTip.SetToolTip(cbRenameToOriginal, "Rename matched output files to the original RAR filenames from the SRR. Requires Stop on first match.");
 
         // Buttons
         toolTip.SetToolTip(btnImportSrr, "Import settings from an SRR file. Auto-configures compression, dictionary, versions, timestamps, and Host OS.");
@@ -161,6 +166,8 @@ public partial class SettingsOptionsForm : Form
         cbDeleteRARFiles.Enabled = enabled;
         cbDeleteDuplicateCRCFiles.Enabled = enabled;
         cbStopOnFirstMatch.Enabled = enabled;
+        cbCompleteAllVolumes.Enabled = enabled;
+        cbRenameToOriginal.Enabled = enabled;
         btnSave.Enabled = enabled;
     }
 
@@ -296,9 +303,12 @@ public partial class SettingsOptionsForm : Form
         cbDeleteRARFiles.Checked = RAROptions.DeleteRARFiles;
         cbDeleteDuplicateCRCFiles.Checked = RAROptions.DeleteDuplicateCRCFiles;
         cbStopOnFirstMatch.Checked = RAROptions.StopOnFirstMatch;
+        cbCompleteAllVolumes.Checked = RAROptions.CompleteAllVolumes;
+        cbRenameToOriginal.Checked = RAROptions.RenameToOriginalNames;
 
-        // Set initial enabled state for duplicate CRC checkbox
+        // Set initial enabled state for dependent checkboxes
         cbDeleteDuplicateCRCFiles.Enabled = !cbDeleteRARFiles.Checked;
+        cbRenameToOriginal.Enabled = cbStopOnFirstMatch.Checked;
     }
 
     private void CbDeleteRARFiles_CheckedChanged(object? sender, EventArgs e)
@@ -306,6 +316,12 @@ public partial class SettingsOptionsForm : Form
         // Disable duplicate CRC option when deleting all non-matching files
         // (it's redundant since all non-matching files are deleted anyway)
         cbDeleteDuplicateCRCFiles.Enabled = !cbDeleteRARFiles.Checked;
+    }
+
+    private void CbStopOnFirstMatch_CheckedChanged(object? sender, EventArgs e)
+    {
+        // Rename to original only makes sense when stopping on first match
+        cbRenameToOriginal.Enabled = cbStopOnFirstMatch.Checked;
     }
 
     private void CbFile_CheckedChanged(object? sender, EventArgs e)
@@ -422,6 +438,13 @@ public partial class SettingsOptionsForm : Form
                 {
                     Log.Debug(this, $"  CRC: {crcEntry.Key} = {crcEntry.Value}", LogTarget.System);
                 }
+            }
+
+            // Store original RAR volume filenames
+            ImportedOriginalRarFileNames = srr.RarFiles.Select(r => r.FileName).ToList();
+            if (ImportedOriginalRarFileNames.Count > 0)
+            {
+                Log.Debug(this, $"Original RAR filenames: {string.Join(", ", ImportedOriginalRarFileNames)}", LogTarget.System);
             }
 
             // Store archive comment if present
@@ -1042,7 +1065,10 @@ public partial class SettingsOptionsForm : Form
             DetectedCmtFileTime = DetectedCmtFileTime,
             DetectedCmtFileAttributes = DetectedCmtFileAttributes,
             // Volume naming
-            UseOldVolumeNaming = cbUseOldVolumeNaming.Checked
+            UseOldVolumeNaming = cbUseOldVolumeNaming.Checked,
+            CompleteAllVolumes = cbCompleteAllVolumes.Checked,
+            RenameToOriginalNames = cbRenameToOriginal.Checked,
+            OriginalRarFileNames = ImportedOriginalRarFileNames
         };
     }
 

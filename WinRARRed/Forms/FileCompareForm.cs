@@ -16,7 +16,7 @@ public partial class FileCompareForm : Form
     private static readonly Color ColorAdded = Color.FromArgb(200, 220, 255);    // Light blue
     private static readonly Color ColorRemoved = Color.FromArgb(255, 220, 180);  // Light orange
     private static readonly Color ColorModified = Color.FromArgb(255, 245, 200); // Light amber
-    private static readonly Color ColorMatch = Color.White;
+    private static readonly Color ColorMatch = Color.FromArgb(220, 240, 220);    // Light green
 
     private string? _leftFilePath;
     private string? _rightFilePath;
@@ -83,18 +83,6 @@ public partial class FileCompareForm : Form
         splitContainerVertical.Panel2Collapsed = !showHexViewToolStripMenuItem.Checked;
     }
 
-    private void ShowAllHexDataToolStripMenuItem_Click(object? sender, EventArgs e)
-    {
-        // Toggle ShowAllData property on both hex views
-        hexViewLeft.ShowAllData = showAllHexDataToolStripMenuItem.Checked;
-        hexViewRight.ShowAllData = showAllHexDataToolStripMenuItem.Checked;
-
-        // Reload the current data to apply the change
-        hexViewLeft.LoadData(_leftFileBytes);
-        hexViewRight.LoadData(_rightFileBytes);
-        RefreshHexComparison();
-    }
-
     #endregion
 
     #region Button Handlers
@@ -157,7 +145,6 @@ public partial class FileCompareForm : Form
     {
         if (nodeData.NodeType == CompareNodeType.DetailedBlock && nodeData.Data is RARDetailedBlock block)
         {
-            // Show only this block's data in hex view
             hexView.LoadBlockData(block.StartOffset, (int)Math.Min(block.TotalSize, int.MaxValue));
         }
         else
@@ -693,187 +680,86 @@ public partial class FileCompareForm : Form
 
     private void CompareRARFiles(RARFileData left, RARFileData right, CompareResult result)
     {
-        // Compare format
+        if (_leftDetailedBlocks != null && _rightDetailedBlocks != null)
+        {
+            CompareDetailedBlocks(_leftDetailedBlocks, _rightDetailedBlocks, result);
+            return;
+        }
+
+        // Fallback when detailed blocks aren't available
         CompareProperty(result.ArchiveDifferences, "Format", left.IsRAR5 ? "RAR 5.x" : "RAR 4.x", right.IsRAR5 ? "RAR 5.x" : "RAR 4.x");
-
-        if (!left.IsRAR5 && !right.IsRAR5)
-        {
-            // Both RAR4
-            if (left.ArchiveHeader != null && right.ArchiveHeader != null)
-            {
-                CompareProperty(result.ArchiveDifferences, "Volume", FormatBool(left.ArchiveHeader.IsVolume), FormatBool(right.ArchiveHeader.IsVolume));
-                CompareProperty(result.ArchiveDifferences, "Solid", FormatBool(left.ArchiveHeader.IsSolid), FormatBool(right.ArchiveHeader.IsSolid));
-                CompareProperty(result.ArchiveDifferences, "Recovery Record", FormatBool(left.ArchiveHeader.HasRecoveryRecord), FormatBool(right.ArchiveHeader.HasRecoveryRecord));
-                CompareProperty(result.ArchiveDifferences, "Locked", FormatBool(left.ArchiveHeader.IsLocked), FormatBool(right.ArchiveHeader.IsLocked));
-                CompareProperty(result.ArchiveDifferences, "Encrypted Headers", FormatBool(left.ArchiveHeader.HasEncryptedHeaders), FormatBool(right.ArchiveHeader.HasEncryptedHeaders));
-            }
-
-            // Compare file headers
-            var leftDict = left.FileHeaders.ToDictionary(f => f.FileName, StringComparer.OrdinalIgnoreCase);
-            var rightDict = right.FileHeaders.ToDictionary(f => f.FileName, StringComparer.OrdinalIgnoreCase);
-
-            foreach (var fileName in leftDict.Keys.Union(rightDict.Keys).OrderBy(f => f))
-            {
-                leftDict.TryGetValue(fileName, out var leftFile);
-                rightDict.TryGetValue(fileName, out var rightFile);
-
-                var fileDiff = new FileDifference { FileName = fileName };
-
-                if (leftFile != null && rightFile == null)
-                {
-                    fileDiff.Type = DifferenceType.Removed;
-                }
-                else if (leftFile == null && rightFile != null)
-                {
-                    fileDiff.Type = DifferenceType.Added;
-                }
-                else if (leftFile != null && rightFile != null)
-                {
-                    CompareRAR4FileHeaders(leftFile, rightFile, fileDiff);
-                }
-
-                if (fileDiff.Type != DifferenceType.None)
-                {
-                    result.FileDifferences.Add(fileDiff);
-                }
-            }
-        }
-        else if (left.IsRAR5 && right.IsRAR5)
-        {
-            // Both RAR5
-            if (left.RAR5ArchiveInfo != null && right.RAR5ArchiveInfo != null)
-            {
-                CompareProperty(result.ArchiveDifferences, "Volume", FormatBool(left.RAR5ArchiveInfo.IsVolume), FormatBool(right.RAR5ArchiveInfo.IsVolume));
-                CompareProperty(result.ArchiveDifferences, "Solid", FormatBool(left.RAR5ArchiveInfo.IsSolid), FormatBool(right.RAR5ArchiveInfo.IsSolid));
-                CompareProperty(result.ArchiveDifferences, "Recovery Record", FormatBool(left.RAR5ArchiveInfo.HasRecoveryRecord), FormatBool(right.RAR5ArchiveInfo.HasRecoveryRecord));
-                CompareProperty(result.ArchiveDifferences, "Locked", FormatBool(left.RAR5ArchiveInfo.IsLocked), FormatBool(right.RAR5ArchiveInfo.IsLocked));
-            }
-
-            // Compare file headers
-            var leftDict = left.RAR5FileInfos.ToDictionary(f => f.FileName, StringComparer.OrdinalIgnoreCase);
-            var rightDict = right.RAR5FileInfos.ToDictionary(f => f.FileName, StringComparer.OrdinalIgnoreCase);
-
-            foreach (var fileName in leftDict.Keys.Union(rightDict.Keys).OrderBy(f => f))
-            {
-                leftDict.TryGetValue(fileName, out var leftFile);
-                rightDict.TryGetValue(fileName, out var rightFile);
-
-                var fileDiff = new FileDifference { FileName = fileName };
-
-                if (leftFile != null && rightFile == null)
-                {
-                    fileDiff.Type = DifferenceType.Removed;
-                }
-                else if (leftFile == null && rightFile != null)
-                {
-                    fileDiff.Type = DifferenceType.Added;
-                }
-                else if (leftFile != null && rightFile != null)
-                {
-                    CompareRAR5FileHeaders(leftFile, rightFile, fileDiff);
-                }
-
-                if (fileDiff.Type != DifferenceType.None)
-                {
-                    result.FileDifferences.Add(fileDiff);
-                }
-            }
-        }
-
-        CompareProperty(result.ArchiveDifferences, "Has Comment", FormatBool(!string.IsNullOrEmpty(left.Comment)), FormatBool(!string.IsNullOrEmpty(right.Comment)));
     }
 
-    private static void CompareRAR4FileHeaders(RARFileHeader left, RARFileHeader right, FileDifference diff)
+    private static void CompareDetailedBlocks(List<RARDetailedBlock> leftBlocks, List<RARDetailedBlock> rightBlocks, CompareResult result)
     {
-        if (left.FileCrc != right.FileCrc)
+        if (leftBlocks.Count != rightBlocks.Count)
         {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
+            result.ArchiveDifferences.Add(new PropertyDifference
             {
-                PropertyName = "CRC",
-                LeftValue = left.FileCrc.ToString("X8"),
-                RightValue = right.FileCrc.ToString("X8")
+                PropertyName = "Block Count",
+                LeftValue = leftBlocks.Count.ToString(),
+                RightValue = rightBlocks.Count.ToString()
             });
         }
 
-        if (left.UnpackedSize != right.UnpackedSize)
+        int count = Math.Min(leftBlocks.Count, rightBlocks.Count);
+        for (int i = 0; i < count; i++)
         {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
-            {
-                PropertyName = "Unpacked Size",
-                LeftValue = left.UnpackedSize.ToString("N0"),
-                RightValue = right.UnpackedSize.ToString("N0")
-            });
-        }
+            var lb = leftBlocks[i];
+            var rb = rightBlocks[i];
 
-        if (left.PackedSize != right.PackedSize)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
-            {
-                PropertyName = "Packed Size",
-                LeftValue = left.PackedSize.ToString("N0"),
-                RightValue = right.PackedSize.ToString("N0")
-            });
-        }
+            bool isItemBlock = lb.BlockType.Contains("File") || lb.BlockType.Contains("Service");
 
-        if (left.CompressionMethod != right.CompressionMethod)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
+            FileDifference? fileDiff = null;
+            if (isItemBlock)
             {
-                PropertyName = "Compression Method",
-                LeftValue = GetCompressionMethodName(left.CompressionMethod),
-                RightValue = GetCompressionMethodName(right.CompressionMethod)
-            });
-        }
+                fileDiff = new FileDifference
+                {
+                    FileName = lb.ItemName ?? rb.ItemName ?? $"Block [{i}]"
+                };
+            }
 
-        if (left.ModifiedTime != right.ModifiedTime)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
+            // Compare fields by index (field order is deterministic from parser)
+            int fieldCount = Math.Max(lb.Fields.Count, rb.Fields.Count);
+            for (int f = 0; f < fieldCount; f++)
             {
-                PropertyName = "Modified Time",
-                LeftValue = left.ModifiedTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "N/A",
-                RightValue = right.ModifiedTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "N/A"
-            });
-        }
-    }
+                var lf = f < lb.Fields.Count ? lb.Fields[f] : null;
+                var rf = f < rb.Fields.Count ? rb.Fields[f] : null;
 
-    private static void CompareRAR5FileHeaders(RAR5FileInfo left, RAR5FileInfo right, FileDifference diff)
-    {
-        if (left.FileCrc != right.FileCrc)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
-            {
-                PropertyName = "CRC",
-                LeftValue = left.FileCrc?.ToString("X8") ?? "N/A",
-                RightValue = right.FileCrc?.ToString("X8") ?? "N/A"
-            });
-        }
+                string name = lf?.Name ?? rf?.Name ?? $"Field {f}";
 
-        if (left.UnpackedSize != right.UnpackedSize)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
-            {
-                PropertyName = "Unpacked Size",
-                LeftValue = left.UnpackedSize.ToString("N0"),
-                RightValue = right.UnpackedSize.ToString("N0")
-            });
-        }
+                // Skip Header CRC - it's a consequence of other field changes
+                if (name == "Header CRC" || name == "CRC32")
+                    continue;
 
-        if (left.CompressionMethod != right.CompressionMethod)
-        {
-            diff.Type = DifferenceType.Modified;
-            diff.PropertyDifferences.Add(new PropertyDifference
+                string leftVal = lf?.Value ?? "N/A";
+                string rightVal = rf?.Value ?? "N/A";
+
+                if (leftVal != rightVal)
+                {
+                    var propDiff = new PropertyDifference
+                    {
+                        PropertyName = name,
+                        LeftValue = leftVal,
+                        RightValue = rightVal
+                    };
+
+                    if (fileDiff != null)
+                    {
+                        fileDiff.Type = DifferenceType.Modified;
+                        fileDiff.PropertyDifferences.Add(propDiff);
+                    }
+                    else
+                    {
+                        result.ArchiveDifferences.Add(propDiff);
+                    }
+                }
+            }
+
+            if (fileDiff != null && fileDiff.Type != DifferenceType.None)
             {
-                PropertyName = "Compression Method",
-                LeftValue = GetCompressionMethodName(left.CompressionMethod),
-                RightValue = GetCompressionMethodName(right.CompressionMethod)
-            });
+                result.FileDifferences.Add(fileDiff);
+            }
         }
     }
 
@@ -943,13 +829,14 @@ public partial class FileCompareForm : Form
         {
             var block = blocks[i];
 
-            // Build block label
-            string blockLabel = $"[{i}] {block.BlockType}";
+            // Rename file headers with data to "File Data"
+            string blockType = block.HasData && block.BlockType.Contains("File") ? "File Data" : block.BlockType;
+            string blockLabel = $"[{i}] {blockType}";
 
             // Add item name for file headers and service blocks
             if (!string.IsNullOrEmpty(block.ItemName))
             {
-                blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+                blockLabel = $"[{i}] {blockType}: {block.ItemName}";
             }
 
             var blockNode = rootNode.Nodes.Add(blockLabel);
@@ -990,9 +877,10 @@ public partial class FileCompareForm : Form
                     for (int i = 0; i < detailedBlocks.Count; i++)
                     {
                         var block = detailedBlocks[i];
-                        string blockLabel = $"[{i}] {block.BlockType}";
+                        string blockType = block.HasData && block.BlockType.Contains("File") ? "File Data" : block.BlockType;
+                        string blockLabel = $"[{i}] {blockType}";
                         if (!string.IsNullOrEmpty(block.ItemName))
-                            blockLabel = $"[{i}] {block.BlockType}: {block.ItemName}";
+                            blockLabel = $"[{i}] {blockType}: {block.ItemName}";
 
                         var blockNode = volNode.Nodes.Add(blockLabel);
                         blockNode.Tag = new CompareNodeData
@@ -1131,7 +1019,7 @@ public partial class FileCompareForm : Form
         ApplyTreeHighlighting(treeViewRight, addedFiles, removedFiles, modifiedFiles, addedStoredFiles, removedStoredFiles, false);
     }
 
-    private static void ApplyTreeHighlighting(TreeView tree, HashSet<string> removed, HashSet<string> added, HashSet<string> modified, HashSet<string> storedRemoved, HashSet<string> storedAdded, bool isLeft)
+    private void ApplyTreeHighlighting(TreeView tree, HashSet<string> removed, HashSet<string> added, HashSet<string> modified, HashSet<string> storedRemoved, HashSet<string> storedAdded, bool isLeft)
     {
         foreach (TreeNode node in tree.Nodes)
         {
@@ -1139,11 +1027,27 @@ public partial class FileCompareForm : Form
         }
     }
 
-    private static void ApplyNodeHighlighting(TreeNode node, HashSet<string> removed, HashSet<string> added, HashSet<string> modified, HashSet<string> storedRemoved, HashSet<string> storedAdded, bool isLeft)
+    private void ApplyNodeHighlighting(TreeNode node, HashSet<string> removed, HashSet<string> added, HashSet<string> modified, HashSet<string> storedRemoved, HashSet<string> storedAdded, bool isLeft)
     {
         if (node.Tag is CompareNodeData data)
         {
-            if (data.NodeType == CompareNodeType.ArchivedFile || data.NodeType == CompareNodeType.StoredFile)
+            if (data.NodeType == CompareNodeType.DetailedBlock && data.Data is RARDetailedBlock block)
+            {
+                var otherBlocks = isLeft ? _rightDetailedBlocks : _leftDetailedBlocks;
+                if (otherBlocks != null)
+                {
+                    var otherBlock = otherBlocks.FirstOrDefault(b =>
+                        b.BlockType == block.BlockType && b.ItemName == block.ItemName);
+                    if (otherBlock != null)
+                    {
+                        bool hasDiff = HasFieldDifferences(block, otherBlock);
+                        node.BackColor = hasDiff ? ColorModified : ColorMatch;
+                        if (hasDiff)
+                            node.Text = $"{GetBaseNodeText(node)} [DIFF]";
+                    }
+                }
+            }
+            else if (data.NodeType == CompareNodeType.ArchivedFile || data.NodeType == CompareNodeType.StoredFile)
             {
                 var fileName = data.FileName ?? "";
 
@@ -1183,6 +1087,21 @@ public partial class FileCompareForm : Form
         {
             ApplyNodeHighlighting(child, removed, added, modified, storedRemoved, storedAdded, isLeft);
         }
+    }
+
+    private static bool HasFieldDifferences(RARDetailedBlock left, RARDetailedBlock right)
+    {
+        if (left.DataSize != right.DataSize) return true;
+
+        int count = Math.Max(left.Fields.Count, right.Fields.Count);
+        for (int f = 0; f < count; f++)
+        {
+            var lf = f < left.Fields.Count ? left.Fields[f] : null;
+            var rf = f < right.Fields.Count ? right.Fields[f] : null;
+            if ((lf?.Value ?? "") != (rf?.Value ?? ""))
+                return true;
+        }
+        return false;
     }
 
     private static string GetBaseNodeText(TreeNode node)
@@ -1293,7 +1212,7 @@ public partial class FileCompareForm : Form
 
         // Add block summary info
         AddPropertyItem(listView, "Block Type", block.BlockType, isLeft, null);
-        AddPropertyItem(listView, "Start Offset", $"0x{block.StartOffset:X}", isLeft, null);
+        AddPropertyItem(listView, "Start Offset", $"0x{block.StartOffset:X8}", isLeft, null);
         AddPropertyItem(listView, "Header Size", $"{block.HeaderSize} bytes", isLeft, null);
         AddPropertyItem(listView, "Total Size", $"{block.TotalSize:N0} bytes", isLeft, null);
 
@@ -1304,6 +1223,9 @@ public partial class FileCompareForm : Form
 
         // Add separator
         listView.Items.Add(new ListViewItem("--- Fields ---") { BackColor = Color.LightGray });
+
+        // Cache matching block for comparison
+        var otherBlock = _compareResult != null ? FindMatchingDetailedBlock(block, isLeft) : null;
 
         // Add all fields with their offsets
         foreach (var field in block.Fields)
@@ -1327,29 +1249,82 @@ public partial class FileCompareForm : Form
             };
 
             // Check for differences if comparing
-            if (_compareResult != null)
+            if (_compareResult != null && otherBlock != null)
             {
-                var otherBlock = FindMatchingDetailedBlock(block, isLeft);
-                if (otherBlock != null)
+                var otherField = otherBlock.Fields.FirstOrDefault(f => f.Name == field.Name);
+                if (otherField != null)
                 {
-                    var otherField = otherBlock.Fields.FirstOrDefault(f => f.Name == field.Name);
-                    if (otherField != null && otherField.Value != field.Value)
-                    {
-                        item.BackColor = ColorModified;
-                    }
+                    item.BackColor = otherField.Value != field.Value ? ColorModified : ColorMatch;
                 }
             }
 
             listView.Items.Add(item);
 
-            // Add child fields (like flag details)
+            // Add child fields (like flag details), inherit parent offset if they don't have their own
             foreach (var child in field.Children)
             {
-                var childItem = new ListViewItem($"    {child.Name}");
+                string childKey = $"    {child.Name}";
+                long childOffset = child.Length > 0 ? child.Offset : field.Offset;
+                int childLength = child.Length > 0 ? child.Length : field.Length;
+
+                if (childLength > 0)
+                {
+                    offsets[childKey] = new ByteRange
+                    {
+                        PropertyName = childKey,
+                        Offset = childOffset,
+                        Length = childLength
+                    };
+                }
+
+                var childItem = new ListViewItem(childKey);
                 childItem.SubItems.Add(child.Value);
                 childItem.ForeColor = Color.DarkBlue;
+
+                // Highlight child fields too
+                if (_compareResult != null && otherBlock != null)
+                {
+                    var otherParent = otherBlock.Fields.FirstOrDefault(f => f.Name == field.Name);
+                    var otherChild = otherParent?.Children.FirstOrDefault(c => c.Name == child.Name);
+                    if (otherChild != null)
+                    {
+                        childItem.BackColor = otherChild.Value != child.Value ? ColorModified : ColorMatch;
+                    }
+                }
+
                 listView.Items.Add(childItem);
             }
+        }
+
+        // Add data row for blocks with packed data
+        if (block.HasData && block.DataSize > 0)
+        {
+            long dataOffset = block.StartOffset + block.HeaderSize;
+            offsets["Data"] = new ByteRange
+            {
+                PropertyName = "Data",
+                Offset = dataOffset,
+                Length = (int)Math.Min(block.DataSize, int.MaxValue)
+            };
+            var dataItem = new ListViewItem("Data");
+            dataItem.SubItems.Add($"{block.DataSize:N0} bytes (offset 0x{dataOffset:X8})");
+
+            // Compare data bytes for highlighting
+            if (_compareResult != null && otherBlock != null && otherBlock.HasData)
+            {
+                var thisFileBytes = isLeft ? _leftFileBytes : _rightFileBytes;
+                var otherFileBytes = isLeft ? _rightFileBytes : _leftFileBytes;
+                if (thisFileBytes != null && otherFileBytes != null)
+                {
+                    long otherDataOffset = otherBlock.StartOffset + otherBlock.HeaderSize;
+                    bool dataMatches = block.DataSize == otherBlock.DataSize &&
+                        thisFileBytes.AsSpan((int)dataOffset, (int)block.DataSize)
+                            .SequenceEqual(otherFileBytes.AsSpan((int)otherDataOffset, (int)otherBlock.DataSize));
+                    dataItem.BackColor = dataMatches ? ColorMatch : ColorModified;
+                }
+            }
+
+            listView.Items.Add(dataItem);
         }
     }
 
@@ -1506,13 +1481,13 @@ public partial class FileCompareForm : Form
     {
         AddPropertyItem(listView, "File Name", stored.FileName, isLeft, null);
         AddPropertyItem(listView, "File Size", $"{stored.FileLength:N0} bytes", isLeft, null);
-        AddPropertyItem(listView, "Data Offset", $"0x{stored.DataOffset:X}", isLeft, null);
+        AddPropertyItem(listView, "Data Offset", $"0x{stored.DataOffset:X8}", isLeft, null);
     }
 
     private void ShowRarVolumeProperties(ListView listView, SrrRarFileBlock rarFile, bool isLeft)
     {
         AddPropertyItem(listView, "Volume Name", rarFile.FileName, isLeft, null);
-        AddPropertyItem(listView, "Block Position", $"0x{rarFile.BlockPosition:X}", isLeft, null);
+        AddPropertyItem(listView, "Block Position", $"0x{rarFile.BlockPosition:X8}", isLeft, null);
         AddPropertyItem(listView, "Header CRC", $"0x{rarFile.Crc:X4}", isLeft, null);
     }
 
@@ -1521,14 +1496,11 @@ public partial class FileCompareForm : Form
         var item = new ListViewItem(property);
         item.SubItems.Add(value);
 
-        // Apply highlighting if this property differs
+        // Apply highlighting based on comparison
         if (diffPropertyName != null && _compareResult != null)
         {
             var diff = _compareResult.ArchiveDifferences.FirstOrDefault(d => d.PropertyName == diffPropertyName);
-            if (diff != null)
-            {
-                item.BackColor = ColorModified;
-            }
+            item.BackColor = diff != null ? ColorModified : ColorMatch;
         }
 
         listView.Items.Add(item);

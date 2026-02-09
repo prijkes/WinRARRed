@@ -142,6 +142,11 @@ public static class RARPatcher
         // Skip RAR signature (7 bytes for RAR 4.x)
         stream.Position = 7;
 
+        // Track End of Archive block for Archive Data CRC patching
+        long endArchivePosition = -1;
+        ushort endArchiveFlags = 0;
+        ushort endArchiveHeaderSize = 0;
+
         while (stream.Position + 7 <= stream.Length)
         {
             long blockStart = stream.Position;
@@ -253,6 +258,14 @@ public static class RARPatcher
             }
             else
             {
+                // Track End of Archive block position
+                if (blockType == (byte)RAR4BlockType.EndArchive)
+                {
+                    endArchivePosition = blockStart;
+                    endArchiveFlags = BitConverter.ToUInt16(baseHeader, OffsetFlags);
+                    endArchiveHeaderSize = headerSize;
+                }
+
                 // Skip this block
                 // For blocks with LONG_BLOCK flag or file headers, read ADD_SIZE
                 ushort flags = BitConverter.ToUInt16(baseHeader, OffsetFlags);
@@ -274,6 +287,16 @@ public static class RARPatcher
             // Safety check: prevent infinite loop
             if (stream.Position <= blockStart)
                 break;
+        }
+
+        // After all header patching, update End of Archive's Archive Data CRC if needed.
+        // The Archive Data CRC covers all bytes from offset 0 to the End of Archive block,
+        // so it becomes stale after patching any header bytes within that range.
+        if (results.Count > 0 && endArchivePosition >= 0 &&
+            (endArchiveFlags & (ushort)RAREndArchiveFlags.DataCrc) != 0 &&
+            endArchiveHeaderSize >= 11) // 7 base + 4 Archive Data CRC minimum
+        {
+            PatchEndOfArchiveCrc(stream, endArchivePosition, endArchiveHeaderSize);
         }
     }
 
@@ -379,5 +402,45 @@ public static class RARPatcher
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Recalculates the Archive Data CRC in the End of Archive block.
+    /// The Archive Data CRC is a CRC32 of all bytes from offset 0 to the start of the End of Archive block.
+    /// </summary>
+    private static void PatchEndOfArchiveCrc(Stream stream, long endArchivePosition, ushort headerSize)
+    {
+        // Compute CRC32 of all bytes from offset 0 to the End of Archive block
+        stream.Position = 0;
+        byte[] buffer = new byte[81920];
+        long remaining = endArchivePosition;
+        uint archiveDataCrc = 0;
+
+        while (remaining > 0)
+        {
+            int toRead = (int)Math.Min(buffer.Length, remaining);
+            int read = stream.Read(buffer, 0, toRead);
+            if (read <= 0) break;
+            archiveDataCrc = Crc32Algorithm.Append(archiveDataCrc, buffer, 0, read);
+            remaining -= read;
+        }
+
+        // Read the End of Archive header
+        stream.Position = endArchivePosition;
+        byte[] endHeader = new byte[headerSize];
+        if (stream.Read(endHeader, 0, headerSize) != headerSize)
+            return;
+
+        // Update Archive Data CRC at offset 7 (immediately after the 7-byte base header)
+        BitConverter.GetBytes(archiveDataCrc).CopyTo(endHeader, 7);
+
+        // Recalculate the End of Archive header's own CRC
+        uint crc32 = Crc32Algorithm.Compute(endHeader, 2, endHeader.Length - 2);
+        ushort newHeaderCrc = (ushort)(crc32 & 0xFFFF);
+        BitConverter.GetBytes(newHeaderCrc).CopyTo(endHeader, OffsetCrc);
+
+        // Write back
+        stream.Position = endArchivePosition;
+        stream.Write(endHeader, 0, endHeader.Length);
     }
 }
