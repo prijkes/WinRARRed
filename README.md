@@ -19,15 +19,15 @@ An optional **two-phase** approach speeds things up dramatically:
 
 ## Features
 
-- Brute-force across multiple WinRAR versions (2.x through 6.x) and archive formats (`-ma4`, `-ma5`).
+- Brute-force across multiple WinRAR versions (2.x through 7.x) and archive formats (RAR4 via `-ma4`, RAR5 via `-ma5`, RAR7 native).
 - Switch matrix support: compression level, dictionary size, solid on/off, recursion, timestamp flags, volume sizing, and `-mt` thread counts.
 - File attribute toggling (Archive, NotContentIndexed) or `-ai` to ignore attributes.
-- Host OS patching: when brute-forcing on Windows for a Unix-created archive, headers are automatically patched to match the original OS, attributes, and timestamps.
+- Header patching: automatically patches Host OS, file attributes, LARGE flag (64-bit sizes), CMT service block fields, and End of Archive block to match original values from SRR. Recalculates header CRCs after each patch.
 - SRR import to prefill settings and verify input files.
 - Multi-volume handling for `.partXX.rar` and legacy `.r00` naming.
-- View generated command lines from the UI.
 - Logging to disk (app logs + per-attempt logs).
 - Optional cleanup of non-matching archives to control disk usage.
+- Rename matched output files to original volume names from SRR.
 
 ### File Inspector
 
@@ -42,12 +42,16 @@ A built-in binary inspector for RAR and SRR files with:
 - Tree filtering to search blocks by name.
 - Export of raw block data via context menu.
 
+### File Compare
+
+Side-by-side comparison of two RAR or SRR files. Parses both files with the detailed header parser and shows matching/differing fields with color-coded highlighting.
+
 ## Requirements
 
 - Windows 10/11.
 - .NET 8.0 runtime.
 - A folder of WinRAR builds, each in its own subdirectory containing `rar.exe`.
-  The folder name must include version digits (examples: `winrar-x64-400`, `rar-550`, `winrar-x64-600`).
+  The folder name must include version digits (examples: `winrar-x64-400`, `rar-550`, `winrar-x64-700`).
 - The release directory with uncompressed files (must be unmodified).
 - A verification file: `.sfv` (CRC32) or `.sha1`.
 
@@ -75,8 +79,21 @@ Use `Options -> Import SRR` to apply metadata from an `.srr`:
 - Archive file list and CRC32s (used to validate copied input files).
 - Compression method and dictionary size.
 - Solid/archive and multi-volume flags plus volume sizing when detectable.
-- Candidate RAR version range based on SRR headers.
+- Candidate RAR version range based on SRR headers (RAR4, RAR5, or RAR7).
+- Host OS, file attributes, LARGE flag, and CMT block fields for post-creation patching.
 - Stored `.sfv` extraction to `%TEMP%\WinRARRed\srr-import\...` when present.
+- Custom packer detection (RELOADED, HI2U, QCF).
+
+## RAR version support
+
+| Version Range | Archive Format | Notes |
+|---------------|----------------|-------|
+| 2.x | RAR4 | Basic compression |
+| 3.x | RAR4 | Timestamp options from 3.20+, CMT service blocks |
+| 4.x | RAR4 | Full feature set |
+| 5.x | RAR4 or RAR5 | Defaults to RAR5 from 5.50+; use `-ma4` for RAR4 |
+| 6.x | RAR4 or RAR5 | Known issue: ignores `-tsc0`/`-tsa0` for RAR4 format |
+| 7.x | RAR7 only | Cannot create RAR4/RAR5; drops `-ma4`/`-ma5`/`-vn` flags |
 
 ## Project structure
 
@@ -88,37 +105,37 @@ WinRARRed/
 │   ├── RARHeaderReader.cs      # RAR 4.x header parsing
 │   ├── RAR5HeaderReader.cs     # RAR 5.x header parsing
 │   ├── RARDetailedHeader.cs    # Detailed per-field parsing with byte offsets
-│   ├── RARPatcher.cs           # Post-creation header patching
-│   └── RARUtils.cs             # CRC, date conversion utilities
+│   ├── RARPatcher.cs           # Post-creation header patching (Host OS, attrs, LARGE, CRC)
+│   ├── RARFileHeader.cs        # Parsed header data structures
+│   ├── RARFlags.cs             # Flag enums (archive, file, end-archive, timestamp precision)
+│   └── RARUtils.cs             # CRC, date conversion, filename decoding
 │
 ├── SRRLib/                     # SRR format library (depends on RARLib)
-│   ├── SRRFile.cs              # Main parser, extracts RAR headers from SRR
-│   └── SRRBlock.cs             # Block type definitions
+│   ├── SRRFile.cs              # Main parser — extracts RAR headers, comments, timestamps, CRCs
+│   └── SRRBlock.cs             # Block type definitions and data classes
 │
 ├── WinRARRed/                  # Main GUI application
 │   ├── Forms/                  # Windows Forms
 │   │   ├── MainForm.cs         # Main window, file selection, log display
-│   │   ├── FileInspectorForm.cs# RAR/SRR binary inspector with hex view
-│   │   ├── FileCompareForm.cs  # SRR/RAR comparison tool
-│   │   └── SettingsOptionsForm.cs
+│   │   ├── SettingsOptionsForm.cs  # Brute-force options, SRR import, version selection
+│   │   ├── FileInspectorForm.cs    # RAR/SRR binary inspector with hex view
+│   │   └── FileCompareForm.cs      # Side-by-side file comparison
 │   ├── Controls/               # Custom controls
-│   │   └── HexViewControl.cs   # Hex viewer with field highlighting
-│   ├── Diagnostics/            # Process management (CliWrap wrapper)
-│   ├── IO/                     # File I/O (SFV, SHA1 parsing)
+│   │   ├── HexViewControl.cs   # Virtualized hex viewer with field highlighting
+│   │   └── OperationProgressStatusUserControl.cs  # Progress bar with time estimates
+│   ├── Diagnostics/            # Process management
+│   │   ├── RARProcess.cs       # CliWrap wrapper for rar.exe
+│   │   ├── RARArchiveVersion.cs    # RAR4/RAR5/RAR7 flags enum
+│   │   └── RARCommandLineArgument.cs  # Version-constrained switch
+│   ├── IO/                     # File I/O (SFV, SHA1 parsing, extraction)
 │   ├── Cryptography/           # CRC32, SHA1 hashing
-│   ├── Manager.cs              # Core brute-force orchestration
-│   ├── RAROptions.cs           # Configuration options
+│   ├── Manager.cs              # Core brute-force orchestration (two-phase, patching)
+│   ├── RAROptions.cs           # Configuration options (patching, naming, attributes)
+│   ├── BruteForceOptions.cs    # Per-run options (paths, hashes)
 │   └── docs/                   # Technical documentation
 │
-├── RARLib.Tests/               # xUnit tests for RARLib (170 tests)
-├── SRRLib.Tests/               # xUnit tests for SRRLib (43 tests)
-│
-└── tools/                      # Python CLI scripts
-    ├── bruteforce_rar.py       # Full RAR brute-force from SRR
-    ├── bruteforce_cmt.py       # CMT block brute-force only
-    ├── inspect_rar_headers.py  # Inspect RAR headers
-    ├── inspect_srr_headers.py  # Inspect SRR headers
-    └── ...
+├── RARLib.Tests/               # xUnit tests for RARLib (176 tests)
+└── SRRLib.Tests/               # xUnit tests for SRRLib (49 tests)
 ```
 
 ## Build
