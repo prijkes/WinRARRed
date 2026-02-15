@@ -287,13 +287,11 @@ public class RARHeaderReader
         byte method = (byte)(methodRaw >= 0x30 ? methodRaw - 0x30 : methodRaw);
 
         // Read filename
-        string? fileName = TryReadFileName(headerEnd, flags, out bool isDirectory, out uint fileAttributes);
+        string? fileName = TryReadFileName(headerEnd, flags, out bool isDirectory, out uint fileAttributes, out uint highPackSize, out uint highUnpSize);
 
         // Handle 64-bit sizes if LHD_LARGE is set
-        ulong packedSize = packSize;
-        ulong unpackedSize = unpSize;
-
-        // Note: HIGH_PACK_SIZE and HIGH_UNP_SIZE are read in TryReadFileName if LHD_LARGE is set
+        ulong packedSize = packSize | ((ulong)highPackSize << 32);
+        ulong unpackedSize = unpSize | ((ulong)highUnpSize << 32);
 
         // Parse timestamps
         DateTime? modifiedTime = RARUtils.DosDateToDateTime(fileTime);
@@ -342,14 +340,18 @@ public class RARHeaderReader
             MtimePrecision = mtimePrecision,
             CtimePrecision = ctimePrecision,
             AtimePrecision = atimePrecision,
-            CrcValid = block.CrcValid
+            CrcValid = block.CrcValid,
+            HighPackSize = highPackSize,
+            HighUnpSize = highUnpSize
         };
     }
 
-    private string? TryReadFileName(long headerEnd, RARFileFlags flags, out bool isDirectory, out uint fileAttributes)
+    private string? TryReadFileName(long headerEnd, RARFileFlags flags, out bool isDirectory, out uint fileAttributes, out uint highPackSize, out uint highUnpSize)
     {
         isDirectory = RARUtils.IsDirectory(flags);
         fileAttributes = 0;
+        highPackSize = 0;
+        highUnpSize = 0;
 
         if (_stream.Position + 2 + 4 > headerEnd)
         {
@@ -359,13 +361,15 @@ public class RARHeaderReader
         ushort nameSize = _reader.ReadUInt16();
         fileAttributes = _reader.ReadUInt32();
 
-        // Skip HIGH_PACK_SIZE and HIGH_UNP_SIZE if LHD_LARGE is set (64-bit sizes)
+        // Read HIGH_PACK_SIZE and HIGH_UNP_SIZE if LHD_LARGE is set (64-bit sizes)
         if ((flags & RARFileFlags.Large) != 0)
         {
-            if (!TrySkipBytes(headerEnd, 8))
+            if (_stream.Position + 8 > headerEnd)
             {
                 return null;
             }
+            highPackSize = _reader.ReadUInt32();
+            highUnpSize = _reader.ReadUInt32();
         }
 
         if (nameSize == 0)
@@ -611,11 +615,14 @@ public class RARHeaderReader
 
         if ((flags & RARFileFlags.Large) != 0)
         {
-            if (!TrySkipBytes(headerEnd, 8))
+            if (_stream.Position + 8 > headerEnd)
             {
                 return null;
             }
-            // For simplicity, we skip high size bytes as comments are typically small
+            uint highPackSize = _reader.ReadUInt32();
+            uint highUnpSize = _reader.ReadUInt32();
+            packedSize = packSize | ((ulong)highPackSize << 32);
+            unpackedSize = unpSize | ((ulong)highUnpSize << 32);
         }
 
         if (nameSize == 0 || _stream.Position + nameSize > headerEnd)

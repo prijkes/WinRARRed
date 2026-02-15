@@ -35,6 +35,7 @@ partial class SettingsOptionsForm
         cbFileA = new System.Windows.Forms.CheckBox();
         gbRARVersion = new System.Windows.Forms.GroupBox();
         label2 = new System.Windows.Forms.Label();
+        cbRARVersion7 = new System.Windows.Forms.CheckBox();
         cbRARVersion6 = new System.Windows.Forms.CheckBox();
         cbRARVersion5 = new System.Windows.Forms.CheckBox();
         cbRARVersion4 = new System.Windows.Forms.CheckBox();
@@ -125,7 +126,7 @@ partial class SettingsOptionsForm
         checkBox3 = new System.Windows.Forms.CheckBox();
         groupBox5 = new System.Windows.Forms.GroupBox();
         gbHostOSOverride = new System.Windows.Forms.GroupBox();
-        lblHostOSDetected = new System.Windows.Forms.Label();
+        lblPatchDetails = new System.Windows.Forms.Label();
         lblHostOSInfo = new System.Windows.Forms.Label();
         cbEnableHostOSPatching = new System.Windows.Forms.CheckBox();
         gbFileOptions.SuspendLayout();
@@ -195,6 +196,7 @@ partial class SettingsOptionsForm
         // gbRARVersion
         // 
         gbRARVersion.Controls.Add(label2);
+        gbRARVersion.Controls.Add(cbRARVersion7);
         gbRARVersion.Controls.Add(cbRARVersion6);
         gbRARVersion.Controls.Add(cbRARVersion5);
         gbRARVersion.Controls.Add(cbRARVersion4);
@@ -225,9 +227,19 @@ partial class SettingsOptionsForm
         cbRARVersion6.TabIndex = 4;
         cbRARVersion6.Text = "RAR 6";
         cbRARVersion6.UseVisualStyleBackColor = true;
-        // 
+        //
+        // cbRARVersion7
+        //
+        cbRARVersion7.AutoSize = true;
+        cbRARVersion7.Location = new System.Drawing.Point(321, 52);
+        cbRARVersion7.Name = "cbRARVersion7";
+        cbRARVersion7.Size = new System.Drawing.Size(57, 19);
+        cbRARVersion7.TabIndex = 6;
+        cbRARVersion7.Text = "RAR 7";
+        cbRARVersion7.UseVisualStyleBackColor = true;
+        //
         // cbRARVersion5
-        // 
+        //
         cbRARVersion5.AutoSize = true;
         cbRARVersion5.Location = new System.Drawing.Point(195, 52);
         cbRARVersion5.Name = "cbRARVersion5";
@@ -1202,41 +1214,40 @@ partial class SettingsOptionsForm
         // 
         // gbHostOSOverride
         // 
-        gbHostOSOverride.Controls.Add(lblHostOSDetected);
+        gbHostOSOverride.Controls.Add(lblPatchDetails);
         gbHostOSOverride.Controls.Add(lblHostOSInfo);
         gbHostOSOverride.Controls.Add(cbEnableHostOSPatching);
         gbHostOSOverride.Location = new System.Drawing.Point(497, 72);
         gbHostOSOverride.Name = "gbHostOSOverride";
-        gbHostOSOverride.Size = new System.Drawing.Size(362, 64);
+        gbHostOSOverride.Size = new System.Drawing.Size(290, 173);
         gbHostOSOverride.TabIndex = 45;
         gbHostOSOverride.TabStop = false;
-        gbHostOSOverride.Text = "Host OS Patching (post-processing)";
-        // 
-        // lblHostOSDetected
-        // 
-        lblHostOSDetected.Location = new System.Drawing.Point(266, 41);
-        lblHostOSDetected.Name = "lblHostOSDetected";
-        lblHostOSDetected.Size = new System.Drawing.Size(87, 15);
-        lblHostOSDetected.TabIndex = 2;
+        gbHostOSOverride.Text = "Header Patching (post-processing)";
+        //
+        // lblPatchDetails
+        //
+        lblPatchDetails.Location = new System.Drawing.Point(6, 56);
+        lblPatchDetails.Name = "lblPatchDetails";
+        lblPatchDetails.Size = new System.Drawing.Size(278, 90);
+        lblPatchDetails.TabIndex = 2;
         // 
         // lblHostOSInfo
         // 
         lblHostOSInfo.AutoSize = true;
         lblHostOSInfo.ForeColor = System.Drawing.SystemColors.GrayText;
-        lblHostOSInfo.Location = new System.Drawing.Point(6, 41);
+        lblHostOSInfo.Location = new System.Drawing.Point(6, 149);
         lblHostOSInfo.Name = "lblHostOSInfo";
-        lblHostOSInfo.Size = new System.Drawing.Size(254, 15);
+        lblHostOSInfo.Size = new System.Drawing.Size(270, 15);
         lblHostOSInfo.TabIndex = 1;
-        lblHostOSInfo.Text = "Import an SRR to detect Host OS and attributes";
+        lblHostOSInfo.Text = "Import an SRR to detect header fields for patching";
         // 
         // cbEnableHostOSPatching
         // 
-        cbEnableHostOSPatching.AutoSize = true;
         cbEnableHostOSPatching.Location = new System.Drawing.Point(6, 19);
         cbEnableHostOSPatching.Name = "cbEnableHostOSPatching";
-        cbEnableHostOSPatching.Size = new System.Drawing.Size(347, 19);
+        cbEnableHostOSPatching.Size = new System.Drawing.Size(270, 37);
         cbEnableHostOSPatching.TabIndex = 0;
-        cbEnableHostOSPatching.Text = "Patch brute-forced RAR to match SRR Host OS and attributes";
+        cbEnableHostOSPatching.Text = "Patch brute-forced RAR headers to match SRR\r\n(Host OS, attributes, LARGE flag)";
         cbEnableHostOSPatching.UseVisualStyleBackColor = true;
         // 
         // SettingsOptionsForm
@@ -1303,6 +1314,7 @@ partial class SettingsOptionsForm
     private System.Windows.Forms.GroupBox gbFileOptions;
         private System.Windows.Forms.GroupBox gbRARVersion;
         private System.Windows.Forms.Label label2;
+        private System.Windows.Forms.CheckBox cbRARVersion7;
         private System.Windows.Forms.CheckBox cbRARVersion6;
         private System.Windows.Forms.CheckBox cbRARVersion5;
         private System.Windows.Forms.CheckBox cbRARVersion4;
@@ -1394,7 +1406,7 @@ partial class SettingsOptionsForm
         private System.Windows.Forms.GroupBox gbHostOSOverride;
         private System.Windows.Forms.CheckBox cbEnableHostOSPatching;
         private System.Windows.Forms.Label lblHostOSInfo;
-        private System.Windows.Forms.Label lblHostOSDetected;
+        private System.Windows.Forms.Label lblPatchDetails;
         private System.Windows.Forms.CheckBox cbStopOnFirstMatch;
         private System.Windows.Forms.CheckBox cbCompleteAllVolumes;
         private System.Windows.Forms.CheckBox cbRenameToOriginal;

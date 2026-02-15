@@ -16,5 +16,10 @@ public enum RARArchiveVersion
     /// <summary>
     /// RAR 5.0 archive format.
     /// </summary>
-    RAR5 = 0x02
+    RAR5 = 0x02,
+
+    /// <summary>
+    /// RAR 7.0 archive format.
+    /// </summary>
+    RAR7 = 0x04
 }

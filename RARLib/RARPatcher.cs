@@ -57,6 +57,23 @@ public class PatchOptions
     /// </summary>
     public uint? ServiceBlockFileTime { get; set; }
 
+    // ===== LARGE Flag Options =====
+
+    /// <summary>
+    /// If true, add LARGE flag + HIGH fields. If false, remove them. If null, no change.
+    /// </summary>
+    public bool? SetLargeFlag { get; set; }
+
+    /// <summary>
+    /// HIGH_PACK_SIZE value to insert when adding LARGE (typically 0).
+    /// </summary>
+    public uint HighPackSize { get; set; }
+
+    /// <summary>
+    /// HIGH_UNP_SIZE value to insert when adding LARGE.
+    /// </summary>
+    public uint HighUnpSize { get; set; }
+
     // ===== Computed Properties =====
 
     /// <summary>
@@ -402,6 +419,189 @@ public static class RARPatcher
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Patches LARGE flag state on file/service headers in a RAR file.
+    /// This is a structural patch: it inserts or removes 8 bytes (HIGH_PACK_SIZE + HIGH_UNP_SIZE)
+    /// in each file/service header, so it must run BEFORE in-place patching (PatchStream).
+    /// </summary>
+    /// <param name="stream">Stream with read/write access</param>
+    /// <param name="options">Patching options with SetLargeFlag</param>
+    /// <returns>True if any modifications were made</returns>
+    public static bool PatchLargeFlags(Stream stream, PatchOptions options)
+    {
+        if (!options.SetLargeFlag.HasValue)
+            return false;
+
+        bool wantLarge = options.SetLargeFlag.Value;
+
+        // Read entire file into memory for structural modification
+        stream.Position = 0;
+        byte[] original = new byte[stream.Length];
+        int bytesRead = 0;
+        while (bytesRead < original.Length)
+        {
+            int read = stream.Read(original, bytesRead, original.Length - bytesRead);
+            if (read <= 0) break;
+            bytesRead += read;
+        }
+
+        using var output = new MemoryStream();
+        bool modified = false;
+
+        // Copy RAR signature (7 bytes)
+        if (bytesRead < 7) return false;
+        output.Write(original, 0, 7);
+
+        int pos = 7;
+
+        while (pos + 7 <= bytesRead)
+        {
+            int blockStart = pos;
+
+            // Read base header fields
+            byte blockType = original[pos + OffsetType];
+            ushort flags = BitConverter.ToUInt16(original, pos + OffsetFlags);
+            ushort headerSize = BitConverter.ToUInt16(original, pos + OffsetHeaderSize);
+
+            if (headerSize < 7 || blockStart + headerSize > bytesRead)
+                break;
+
+            bool isFileHeader = blockType == (byte)RAR4BlockType.FileHeader;
+            bool isServiceBlock = blockType == (byte)RAR4BlockType.Service;
+
+            // Determine ADD_SIZE for data section
+            bool hasAddSize = (flags & (ushort)RARFileFlags.LongBlock) != 0 ||
+                              isFileHeader || isServiceBlock;
+            uint addSize = 0;
+            if (hasAddSize && blockStart + 11 <= bytesRead)
+            {
+                addSize = BitConverter.ToUInt32(original, blockStart + OffsetAddSize);
+            }
+
+            if ((isFileHeader || isServiceBlock) && headerSize >= 32)
+            {
+                bool hasLarge = (flags & (ushort)RARFileFlags.Large) != 0;
+
+                if (wantLarge && !hasLarge)
+                {
+                    // ADD LARGE: insert 8 bytes at offset 32 (after ATTR field)
+                    byte[] header = new byte[headerSize + 8];
+                    // Copy bytes 0-31 (up to and including ATTR)
+                    Array.Copy(original, blockStart, header, 0, 32);
+                    // Insert HIGH_PACK_SIZE and HIGH_UNP_SIZE at offset 32
+                    BitConverter.GetBytes(options.HighPackSize).CopyTo(header, 32);
+                    BitConverter.GetBytes(options.HighUnpSize).CopyTo(header, 36);
+                    // Copy remaining header bytes (from offset 32 onward in original)
+                    int remaining = headerSize - 32;
+                    if (remaining > 0)
+                    {
+                        Array.Copy(original, blockStart + 32, header, 40, remaining);
+                    }
+
+                    // Update flags: set LARGE bit
+                    ushort newFlags = (ushort)(flags | (ushort)RARFileFlags.Large);
+                    BitConverter.GetBytes(newFlags).CopyTo(header, OffsetFlags);
+
+                    // Update header size (+8)
+                    ushort newHeaderSize = (ushort)(headerSize + 8);
+                    BitConverter.GetBytes(newHeaderSize).CopyTo(header, OffsetHeaderSize);
+
+                    // Recalculate CRC
+                    uint crc32 = Crc32Algorithm.Compute(header, 2, header.Length - 2);
+                    ushort newCrc = (ushort)(crc32 & 0xFFFF);
+                    BitConverter.GetBytes(newCrc).CopyTo(header, OffsetCrc);
+
+                    // Write modified header
+                    output.Write(header, 0, header.Length);
+                    modified = true;
+                }
+                else if (!wantLarge && hasLarge)
+                {
+                    // REMOVE LARGE: remove 8 bytes at offset 32
+                    if (headerSize < 40)
+                    {
+                        // Header too small to contain HIGH fields, just copy as-is
+                        output.Write(original, blockStart, headerSize);
+                    }
+                    else
+                    {
+                        byte[] header = new byte[headerSize - 8];
+                        // Copy bytes 0-31
+                        Array.Copy(original, blockStart, header, 0, 32);
+                        // Skip 8 bytes (HIGH_PACK_SIZE + HIGH_UNP_SIZE), copy rest
+                        int remaining = headerSize - 40;
+                        if (remaining > 0)
+                        {
+                            Array.Copy(original, blockStart + 40, header, 32, remaining);
+                        }
+
+                        // Update flags: clear LARGE bit
+                        ushort newFlags = (ushort)(flags & ~(ushort)RARFileFlags.Large);
+                        BitConverter.GetBytes(newFlags).CopyTo(header, OffsetFlags);
+
+                        // Update header size (-8)
+                        ushort newHeaderSize = (ushort)(headerSize - 8);
+                        BitConverter.GetBytes(newHeaderSize).CopyTo(header, OffsetHeaderSize);
+
+                        // Recalculate CRC
+                        uint crc32 = Crc32Algorithm.Compute(header, 2, header.Length - 2);
+                        ushort newCrc = (ushort)(crc32 & 0xFFFF);
+                        BitConverter.GetBytes(newCrc).CopyTo(header, OffsetCrc);
+
+                        // Write modified header
+                        output.Write(header, 0, header.Length);
+                        modified = true;
+                    }
+                }
+                else
+                {
+                    // LARGE state already matches, copy header unchanged
+                    output.Write(original, blockStart, headerSize);
+                }
+
+                // Copy data section unchanged
+                if (addSize > 0 && blockStart + headerSize + addSize <= bytesRead)
+                {
+                    output.Write(original, blockStart + headerSize, (int)addSize);
+                }
+
+                pos = blockStart + headerSize + (int)addSize;
+            }
+            else
+            {
+                // Non-file/service block: copy unchanged (header + data)
+                int blockTotalSize = headerSize + (hasAddSize ? (int)addSize : 0);
+                if (blockStart + blockTotalSize > bytesRead)
+                    blockTotalSize = bytesRead - blockStart;
+                output.Write(original, blockStart, blockTotalSize);
+
+                pos = blockStart + blockTotalSize;
+            }
+
+            // Safety check: prevent infinite loop
+            if (pos <= blockStart)
+                break;
+        }
+
+        // Copy any trailing bytes
+        if (pos < bytesRead)
+        {
+            output.Write(original, pos, bytesRead - pos);
+        }
+
+        if (!modified)
+            return false;
+
+        // Write modified content back to stream
+        stream.Position = 0;
+        stream.SetLength(output.Length);
+        output.Position = 0;
+        output.CopyTo(stream);
+        stream.Flush();
+
+        return true;
     }
 
     /// <summary>

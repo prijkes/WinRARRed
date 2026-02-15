@@ -90,6 +90,12 @@ public class RARFileHeader
 
     /// <summary>True if file uses 64-bit sizes.</summary>
     public bool HasLargeSize => (Flags & RARFileFlags.Large) != 0;
+
+    /// <summary>Upper 32 bits of packed size (when LARGE flag set).</summary>
+    public uint HighPackSize { get; set; }
+
+    /// <summary>Upper 32 bits of unpacked size (when LARGE flag set).</summary>
+    public uint HighUnpSize { get; set; }
 }
 
 /// <summary>

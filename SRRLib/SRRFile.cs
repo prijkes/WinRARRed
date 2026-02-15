@@ -75,8 +75,25 @@ public class SRRFile
     public bool? HasUnicodeNames { get; private set; }
     public bool? HasExtendedTime { get; private set; }
 
+    /// <summary>Upper 32 bits of packed size from first LARGE file header.</summary>
+    public uint? DetectedHighPackSize { get; private set; }
+
+    /// <summary>Upper 32 bits of unpacked size from first LARGE file header.</summary>
+    public uint? DetectedHighUnpSize { get; private set; }
+
     // CRC validation tracking
     public int HeaderCrcMismatches { get; private set; }
+
+    // Custom RAR packer detection
+
+    /// <summary>
+    /// True if any file header has sentinel unpacked_size values indicating a custom RAR packer (not WinRAR).
+    /// Known groups: RELOADED, HI2U, 0x0007, 0x0815, QCF.
+    /// </summary>
+    public bool HasCustomPackerHeaders { get; private set; }
+
+    /// <summary>The type of custom packer anomaly detected, if any.</summary>
+    public CustomPackerType CustomPackerDetected { get; private set; }
 
     // Archive comment extracted from CMT sub-block
     public string? ArchiveComment { get; private set; }
@@ -586,6 +603,25 @@ public class SRRFile
 
     private void ProcessFileHeader(RARFileHeader header)
     {
+        // Detect custom RAR packer sentinel values in unpacked_size
+        if (!HasCustomPackerHeaders && !header.IsDirectory)
+        {
+            if (header.UnpackedSize == 0xFFFFFFFFFFFFFFFF)
+            {
+                // Both low and high 32-bit fields are all ones (LARGE flag set).
+                // Known groups: RELOADED, HI2U, 0x0007, 0x0815
+                HasCustomPackerHeaders = true;
+                CustomPackerDetected = CustomPackerType.AllOnesWithLargeFlag;
+            }
+            else if (header.UnpackedSize == 0xFFFFFFFF && !header.HasLargeSize)
+            {
+                // Raw 32-bit UNP_SIZE maxed out without LARGE flag.
+                // Known group: QCF
+                HasCustomPackerHeaders = true;
+                CustomPackerDetected = CustomPackerType.MaxUint32WithoutLargeFlag;
+            }
+        }
+
         // Store first file's compression settings
         if (CompressionMethod == null)
         {
@@ -595,6 +631,13 @@ public class SRRFile
             HasLargeFiles = header.HasLargeSize;
             HasUnicodeNames = header.HasUnicodeName;
             HasExtendedTime = header.HasExtendedTime;
+
+            // Capture HIGH values from first LARGE file header
+            if (header.HasLargeSize)
+            {
+                DetectedHighPackSize = header.HighPackSize;
+                DetectedHighUnpSize = header.HighUnpSize;
+            }
         }
 
         // Capture Host OS and file attributes from first file header

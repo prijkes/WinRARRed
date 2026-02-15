@@ -201,7 +201,36 @@ public class RAROptions
     public List<string> OriginalRarFileNames { get; set; } = [];
 
     /// <summary>
-    /// Returns true if patching is needed (Host OS differs from current platform).
+    /// Gets or sets whether the LARGE flag was detected in SRR file headers.
+    /// When set, LARGE flag patching will enforce this state on brute-forced RARs.
+    /// </summary>
+    public bool? DetectedLargeFlag { get; set; }
+
+    /// <summary>
+    /// Gets or sets the HIGH_PACK_SIZE value from SRR (upper 32 bits of packed size).
+    /// Used when adding LARGE flag to brute-forced RAR headers.
+    /// </summary>
+    public uint? DetectedHighPackSize { get; set; }
+
+    /// <summary>
+    /// Gets or sets the HIGH_UNP_SIZE value from SRR (upper 32 bits of unpacked size).
+    /// Used when adding LARGE flag to brute-forced RAR headers.
+    /// </summary>
+    public uint? DetectedHighUnpSize { get; set; }
+
+    /// <summary>
+    /// Returns true if LARGE flag patching is needed.
+    /// This is true when we know the original's LARGE state from the SRR.
+    /// </summary>
+    public bool NeedsLargePatching => DetectedLargeFlag.HasValue;
+
+    /// <summary>
+    /// Returns true if any patching is needed (Host OS, attributes, or LARGE flag).
+    /// </summary>
+    public bool NeedsPatching => NeedsHostOSPatching || NeedsAttributePatching || NeedsLargePatching;
+
+    /// <summary>
+    /// Returns true if Host OS patching is needed (Host OS differs from current platform).
     /// </summary>
     public bool NeedsHostOSPatching
     {
@@ -216,4 +245,10 @@ public class RAROptions
             return DetectedFileHostOS.Value != currentHostOS;
         }
     }
+
+    /// <summary>
+    /// Returns true if file attribute patching is needed.
+    /// Attributes can differ even when the Host OS matches (e.g., Archive bit 0x20).
+    /// </summary>
+    public bool NeedsAttributePatching => EnableHostOSPatching && DetectedFileAttributes.HasValue;
 }

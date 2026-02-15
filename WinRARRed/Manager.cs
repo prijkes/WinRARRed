@@ -86,7 +86,8 @@ public partial class Manager
         return version switch
         {
             < 500 => RARArchiveVersion.RAR4,
-            >= 500 => RARArchiveVersion.RAR5
+            < 700 => RARArchiveVersion.RAR5,
+            >= 700 => RARArchiveVersion.RAR7
         };
     }
 
@@ -338,11 +339,12 @@ public partial class Manager
                             (!a.ArchiveVersion.HasValue || a.ArchiveVersion.Value.HasFlag(archiveVersion))
                         ).Select(a => a.Argument);
 
-                        string joinedArguments = string.Join("", filteredArguments);
-                        string rarFilePath = Path.Combine(options.RARInstallationsDirectoryPath, $"{rarVersionDirectoryName}-{joinedArguments}.rar");
-                        if (File.Exists(rarFilePath))
+                        // Apply same RAR 6.x timestamp skip as the main loop
+                        bool hasTimestampOptions = filteredArguments.Any(arg => arg.StartsWith("-ts"));
+                        bool isRAR4Format = archiveVersion == RARArchiveVersion.RAR4 ||
+                                           (version >= 550 && version < 700 && !filteredArguments.Contains("-ma5"));
+                        if (version >= 600 && version < 700 && isRAR4Format && hasTimestampOptions)
                         {
-                            // Throw error? Overwrite?
                             return;
                         }
 
@@ -688,10 +690,11 @@ public partial class Manager
 
             // RAR 6.x doesn't honor timestamp options (-tsc0/-tsa0) for RAR4 format archives
             // Skip this combination to avoid creating archives with wrong extended time flags
+            // RAR 7.x is excluded: it only creates RAR7 format and handles timestamps natively
             bool hasTimestampOptions = filteredArguments.Any(a => a.StartsWith("-ts"));
             bool isRAR4Format = archiveVersion == RARArchiveVersion.RAR4 ||
-                               (version >= 550 && !filteredArguments.Contains("-ma5"));
-            if (version >= 600 && isRAR4Format && hasTimestampOptions)
+                               (version >= 550 && version < 700 && !filteredArguments.Contains("-ma5"));
+            if (version >= 600 && version < 700 && isRAR4Format && hasTimestampOptions)
             {
                 if (!loggedRAR6TimestampSkip)
                 {
@@ -717,14 +720,15 @@ public partial class Manager
             // Build final arguments list, including comment option if available
             List<string> finalArguments = [.. filteredArguments];
 
-            // Auto-add -ma4 for RAR 5.50+ to force RAR4 format (unless -ma5 was explicitly requested)
-            if (version >= 550 && !finalArguments.Contains("-ma4") && !finalArguments.Contains("-ma5"))
+            // Auto-add -ma4 for RAR 5.50-6.x to force RAR4 format (unless -ma5 was explicitly requested)
+            // RAR 7.x doesn't accept -ma4/-ma5 flags
+            if (version >= 550 && version < 700 && !finalArguments.Contains("-ma4") && !finalArguments.Contains("-ma5"))
             {
                 finalArguments.Insert(0, "-ma4");
             }
 
-            // Add -vn for old volume naming if enabled (available since RAR 3.00)
-            if (options.RAROptions.UseOldVolumeNaming && version >= 300 && !finalArguments.Contains("-vn"))
+            // Add -vn for old volume naming if enabled (available since RAR 3.00, removed in RAR 7.x)
+            if (options.RAROptions.UseOldVolumeNaming && version >= 300 && version < 700 && !finalArguments.Contains("-vn"))
             {
                 finalArguments.Add("-vn");
             }
@@ -797,8 +801,8 @@ public partial class Manager
                     Log.Debug(this, $"Actual file created: {actualRarFilePath} (expected: {Path.GetFileName(rarFilePath)})", LogTarget.Phase2);
                 }
 
-                // Apply Host OS patching to first volume only (other volumes may still be in progress)
-                if (options.RAROptions.NeedsHostOSPatching)
+                // Apply patching to first volume only (other volumes may still be in progress)
+                if (options.RAROptions.NeedsPatching)
                 {
                     PatchRARFilesHostOS(actualRarFilePath, options.RAROptions, allVolumes: false);
                 }
@@ -851,31 +855,40 @@ public partial class Manager
                 }
 
                 // Log match to System tab for visibility
-                string patchedNote = options.RAROptions.NeedsHostOSPatching ? " (patched)" : "";
+                string patchedNote = options.RAROptions.NeedsPatching ? " (patched)" : "";
                 Log.Information(this, $"*** MATCH FOUND{patchedNote}! ***", LogTarget.System);
                 Log.Information(this, $"  Version: {rarVersionDirectoryName}", LogTarget.System);
                 Log.Information(this, $"  Params:  {joinedArguments}", LogTarget.System);
                 Log.Information(this, $"  Hash:    {hash}", LogTarget.System);
                 Log.Information(this, $"  RAR:     {actualRarFilePath}", LogTarget.System);
 
-                if (options.RAROptions.NeedsHostOSPatching)
+                if (options.RAROptions.NeedsPatching)
                 {
                     var opts = options.RAROptions;
-                    string hostOS = opts.DetectedFileHostOS.HasValue
-                        ? $"{RARPatcher.GetHostOSName(opts.DetectedFileHostOS.Value)} (0x{opts.DetectedFileHostOS.Value:X2})"
-                        : "N/A";
-                    Log.Information(this, $"  Patched: Host OS -> {hostOS}, Attributes -> 0x{opts.DetectedFileAttributes ?? 0:X8}", LogTarget.System);
 
-                    if (opts.DetectedCmtHostOS.HasValue || opts.DetectedCmtFileTime.HasValue || opts.DetectedCmtFileAttributes.HasValue)
+                    if (opts.NeedsHostOSPatching)
                     {
-                        var cmtParts = new List<string>();
-                        if (opts.DetectedCmtHostOS.HasValue)
-                            cmtParts.Add($"Host OS -> {RARPatcher.GetHostOSName(opts.DetectedCmtHostOS.Value)} (0x{opts.DetectedCmtHostOS.Value:X2})");
-                        if (opts.DetectedCmtFileTime.HasValue)
-                            cmtParts.Add($"File Time -> 0x{opts.DetectedCmtFileTime.Value:X8}");
-                        if (opts.DetectedCmtFileAttributes.HasValue)
-                            cmtParts.Add($"Attributes -> 0x{opts.DetectedCmtFileAttributes.Value:X8}");
-                        Log.Information(this, $"  CMT:     {string.Join(", ", cmtParts)}", LogTarget.System);
+                        string hostOS = opts.DetectedFileHostOS.HasValue
+                            ? $"{RARPatcher.GetHostOSName(opts.DetectedFileHostOS.Value)} (0x{opts.DetectedFileHostOS.Value:X2})"
+                            : "N/A";
+                        Log.Information(this, $"  Patched: Host OS -> {hostOS}, Attributes -> 0x{opts.DetectedFileAttributes ?? 0:X8}", LogTarget.System);
+
+                        if (opts.DetectedCmtHostOS.HasValue || opts.DetectedCmtFileTime.HasValue || opts.DetectedCmtFileAttributes.HasValue)
+                        {
+                            var cmtParts = new List<string>();
+                            if (opts.DetectedCmtHostOS.HasValue)
+                                cmtParts.Add($"Host OS -> {RARPatcher.GetHostOSName(opts.DetectedCmtHostOS.Value)} (0x{opts.DetectedCmtHostOS.Value:X2})");
+                            if (opts.DetectedCmtFileTime.HasValue)
+                                cmtParts.Add($"File Time -> 0x{opts.DetectedCmtFileTime.Value:X8}");
+                            if (opts.DetectedCmtFileAttributes.HasValue)
+                                cmtParts.Add($"Attributes -> 0x{opts.DetectedCmtFileAttributes.Value:X8}");
+                            Log.Information(this, $"  CMT:     {string.Join(", ", cmtParts)}", LogTarget.System);
+                        }
+                    }
+
+                    if (opts.NeedsLargePatching)
+                    {
+                        Log.Information(this, $"  LARGE:   {(opts.DetectedLargeFlag == true ? "Added" : "Removed")} (HIGH_PACK=0x{opts.DetectedHighPackSize ?? 0:X8}, HIGH_UNP=0x{opts.DetectedHighUnpSize ?? 0:X8})", LogTarget.System);
                     }
 
                     Log.Information(this, "  Note:    RAR output was patched post-creation to match original headers", LogTarget.System);
@@ -883,7 +896,7 @@ public partial class Manager
 
                 // Move files to output directory
                 string baseName = Path.GetFileNameWithoutExtension(rarFilePath);
-                string patchedBaseName = options.RAROptions.NeedsHostOSPatching ? baseName + "-os-patched" : baseName;
+                string patchedBaseName = options.RAROptions.NeedsPatching ? baseName + "-patched" : baseName;
                 var originalNames = options.RAROptions.OriginalRarFileNames;
                 bool useOriginalNames = options.RAROptions.RenameToOriginalNames &&
                                         options.RAROptions.StopOnFirstMatch &&
@@ -896,7 +909,7 @@ public partial class Manager
                     if (completedRarFilePath != null)
                     {
                         // Patch remaining volumes (first volume already patched - will be no-op for it)
-                        if (options.RAROptions.NeedsHostOSPatching)
+                        if (options.RAROptions.NeedsPatching)
                         {
                             PatchRARFilesHostOS(completedRarFilePath, options.RAROptions);
                         }
@@ -1426,7 +1439,7 @@ public partial class Manager
 
     private void PatchRARFilesHostOS(string rarFilePath, RAROptions rarOptions, bool allVolumes = true)
     {
-        if (!rarOptions.EnableHostOSPatching || !rarOptions.DetectedFileHostOS.HasValue)
+        if (!rarOptions.NeedsPatching)
         {
             return;
         }
@@ -1435,28 +1448,61 @@ public partial class Manager
         {
             // Collect files to patch (all volumes or just the specified file)
             List<string> filesToPatch = allVolumes ? GetAllVolumeFiles(rarFilePath) : [rarFilePath];
-            string hostOSName = RARPatcher.GetHostOSName(rarOptions.DetectedFileHostOS.Value);
 
-            Log.Information(this, $"Patching to match SRR: Host OS={hostOSName} (0x{rarOptions.DetectedFileHostOS.Value:X2}), Attrs=0x{rarOptions.DetectedFileAttributes ?? 0:X8} for {filesToPatch.Count} file(s)", LogTarget.Phase2);
+            if (rarOptions.NeedsHostOSPatching)
+            {
+                string hostOSName = RARPatcher.GetHostOSName(rarOptions.DetectedFileHostOS!.Value);
+                Log.Information(this, $"Patching to match SRR: Host OS={hostOSName} (0x{rarOptions.DetectedFileHostOS.Value:X2}), Attrs=0x{rarOptions.DetectedFileAttributes ?? 0:X8} for {filesToPatch.Count} file(s)", LogTarget.Phase2);
+            }
 
-            // Use exact values detected from SRR headers
+            if (rarOptions.NeedsLargePatching)
+            {
+                Log.Information(this, $"Patching LARGE flag: {(rarOptions.DetectedLargeFlag == true ? "adding" : "removing")} for {filesToPatch.Count} file(s)", LogTarget.Phase2);
+            }
+
+            // Build patch options
             var patchOptions = new PatchOptions
             {
-                // File header values
-                FileHostOS = rarOptions.DetectedFileHostOS,
-                FileAttributes = rarOptions.DetectedFileAttributes,
-                // Service block (CMT) values - use CMT-specific values if available, otherwise fall back to file values
-                PatchServiceBlocks = true,
-                ServiceBlockHostOS = rarOptions.DetectedCmtHostOS ?? rarOptions.DetectedFileHostOS,
-                ServiceBlockAttributes = rarOptions.DetectedCmtFileAttributes ?? rarOptions.DetectedFileAttributes,
-                ServiceBlockFileTime = rarOptions.DetectedCmtFileTime
+                // LARGE flag patching
+                SetLargeFlag = rarOptions.DetectedLargeFlag,
+                HighPackSize = rarOptions.DetectedHighPackSize ?? 0,
+                HighUnpSize = rarOptions.DetectedHighUnpSize ?? 0
             };
+
+            // Set Host OS options if Host OS differs from current platform
+            if (rarOptions.NeedsHostOSPatching)
+            {
+                patchOptions.FileHostOS = rarOptions.DetectedFileHostOS;
+                patchOptions.PatchServiceBlocks = true;
+                patchOptions.ServiceBlockHostOS = rarOptions.DetectedCmtHostOS ?? rarOptions.DetectedFileHostOS;
+                patchOptions.ServiceBlockFileTime = rarOptions.DetectedCmtFileTime;
+            }
+
+            // Set attribute options if detected (attributes can differ even when Host OS matches)
+            if (rarOptions.NeedsAttributePatching)
+            {
+                patchOptions.FileAttributes = rarOptions.DetectedFileAttributes;
+                patchOptions.PatchServiceBlocks = true;
+                patchOptions.ServiceBlockAttributes = rarOptions.DetectedCmtFileAttributes ?? rarOptions.DetectedFileAttributes;
+            }
 
             int totalPatched = 0;
             foreach (string filePath in filesToPatch)
             {
                 try
                 {
+                    // LARGE patching must run first (structural change) before in-place patching
+                    if (rarOptions.NeedsLargePatching)
+                    {
+                        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                        bool largeModified = RARPatcher.PatchLargeFlags(stream, patchOptions);
+                        if (largeModified)
+                        {
+                            Log.Debug(this, $"LARGE flag patched in: {filePath}", LogTarget.Phase2);
+                        }
+                    }
+
+                    // In-place patching (Host OS, Attributes, File Time, CRC)
                     var results = RARPatcher.PatchFile(filePath, patchOptions);
                     totalPatched += results.Count;
 
@@ -1478,7 +1524,7 @@ public partial class Manager
         }
         catch (Exception ex)
         {
-            Log.Warning(this, $"Host OS patching failed: {ex.Message}", LogTarget.Phase2);
+            Log.Warning(this, $"Patching failed: {ex.Message}", LogTarget.Phase2);
         }
     }
 
@@ -1723,8 +1769,8 @@ public partial class Manager
             // Build arguments using CMT-specific compression method and dictionary
             List<string> args = ["a", "-r", cmtMethodArg, cmtDictArg, $"-z{commentFilePath}"];
 
-            // Add -ma4 for RAR 5.50+ to create RAR4 format
-            if (version >= 550)
+            // Add -ma4 for RAR 5.50-6.x to create RAR4 format (RAR 7.x doesn't accept -ma4)
+            if (version >= 550 && version < 700)
             {
                 args.Add("-ma4");
             }
@@ -1899,6 +1945,19 @@ public partial class Manager
             Log.Information(this, $"  Detected CMT attributes: 0x{opts.DetectedCmtFileAttributes.Value:X8}", LogTarget.System);
         }
         Log.Information(this, $"  Needs Host OS patching: {opts.NeedsHostOSPatching}", LogTarget.System);
+        Log.Information(this, $"  Needs attribute patching: {opts.NeedsAttributePatching}", LogTarget.System);
+
+        // LARGE flag
+        if (opts.DetectedLargeFlag.HasValue)
+        {
+            Log.Information(this, $"  Detected LARGE flag: {opts.DetectedLargeFlag.Value}", LogTarget.System);
+            if (opts.DetectedLargeFlag.Value)
+            {
+                Log.Information(this, $"  Detected HIGH_PACK_SIZE: 0x{opts.DetectedHighPackSize ?? 0:X8}", LogTarget.System);
+                Log.Information(this, $"  Detected HIGH_UNP_SIZE: 0x{opts.DetectedHighUnpSize ?? 0:X8}", LogTarget.System);
+            }
+        }
+        Log.Information(this, $"  Needs LARGE patching: {opts.NeedsLargePatching}", LogTarget.System);
 
         // File/directory counts
         Log.Information(this, $"  File timestamps to apply: {opts.FileTimestamps.Count}", LogTarget.System);

@@ -34,6 +34,11 @@ public partial class SettingsOptionsForm : Form
     private uint? DetectedCmtFileTime = null;
     private uint? DetectedCmtFileAttributes = null;
 
+    // LARGE flag patching - detected from file header flags
+    private bool? DetectedLargeFlag = null;
+    private uint? DetectedHighPackSize = null;
+    private uint? DetectedHighUnpSize = null;
+
     // Volume naming - detected from archive header flags
     private bool? DetectedHasNewVolumeNaming = null;
 
@@ -78,6 +83,7 @@ public partial class SettingsOptionsForm : Form
         toolTip.SetToolTip(cbRARVersion4, "RAR 4.x (versions 4.00-4.20). Last major version using RAR4 format by default.");
         toolTip.SetToolTip(cbRARVersion5, "RAR 5.x (versions 5.00-5.90). Introduced RAR5 format. 5.50+ defaults to RAR5.");
         toolTip.SetToolTip(cbRARVersion6, "RAR 6.x (versions 6.00+). Always uses RAR5 format unless -ma4 is specified.");
+        toolTip.SetToolTip(cbRARVersion7, "RAR 7.x (versions 7.00+). Uses RAR7 format only — cannot create RAR4/RAR5 archives.");
 
         // File Attributes
         toolTip.SetToolTip(cbFileA, "Archive attribute (attrib +A). Tri-state: Checked=test both on/off, Indeterminate=always set.");
@@ -145,7 +151,7 @@ public partial class SettingsOptionsForm : Form
         toolTip.SetToolTip(cbSwitchDS, "-ds: Disable name sort. Files are added in filesystem order.");
 
         // Host OS Patching
-        toolTip.SetToolTip(cbEnableHostOSPatching, "After creating each test RAR, patch the Host OS byte and file attributes to match the original archive. Required when brute-forcing on Windows for Unix-created archives.");
+        toolTip.SetToolTip(cbEnableHostOSPatching, $"After creating each test RAR, patch headers to match the original archive.{Environment.NewLine}Handles Host OS, file attributes, and LARGE flag (64-bit sizes).{Environment.NewLine}Required when brute-forcing on Windows for Unix-created archives or when the SRR has structural header differences.");
 
         // Output Options
         toolTip.SetToolTip(cbDeleteRARFiles, "Delete non-matching RAR files after testing. Saves disk space during brute force.");
@@ -178,6 +184,7 @@ public partial class SettingsOptionsForm : Form
         cbRARVersion4.Checked = RAROptions.RARVersions.Any(r => r.Start == 400);
         cbRARVersion5.Checked = RAROptions.RARVersions.Any(r => r.Start == 500);
         cbRARVersion6.Checked = RAROptions.RARVersions.Any(r => r.Start == 600);
+        cbRARVersion7.Checked = RAROptions.RARVersions.Any(r => r.Start == 700);
         cbFileA.CheckState = RAROptions.SetFileArchiveAttribute;
         cbFileI.CheckState = RAROptions.SetFileNotContentIndexedAttribute;
         cbSwitchAI.Checked = RAROptions.CommandLineArguments.Any(a => a.Any(ab => ab.Argument == "-ai"));
@@ -390,6 +397,30 @@ public partial class SettingsOptionsForm : Form
             List<string> importedSettings = [];
 
             Log.Information(this, $"SRR loaded successfully", LogTarget.System);
+
+            // Detect custom RAR packer (non-WinRAR) headers
+            if (srr.HasCustomPackerHeaders)
+            {
+                string packerWarning = srr.CustomPackerDetected switch
+                {
+                    CustomPackerType.AllOnesWithLargeFlag =>
+                        "This SRR contains file headers with unpacked_size = 0xFFFFFFFFFFFFFFFF, " +
+                        "which indicates the RAR files were created with a custom packer (not WinRAR).\n\n" +
+                        "Known groups: RELOADED, HI2U, 0x0007, 0x0815.\n\n" +
+                        "Brute-forcing RAR versions will not produce a match for this release.",
+                    CustomPackerType.MaxUint32WithoutLargeFlag =>
+                        "This SRR contains file headers with unpacked_size = 0xFFFFFFFF (without LARGE flag), " +
+                        "which indicates the RAR files were created with a broken or custom packer.\n\n" +
+                        "Known group: QCF.\n\n" +
+                        "Brute-forcing RAR versions will not produce a match for this release.",
+                    _ => "This SRR contains anomalous file headers indicating a custom RAR packer."
+                };
+
+                Log.Warning(this, $"Custom RAR packer detected: {srr.CustomPackerDetected}", LogTarget.System);
+                importedSettings.Add($"⚠ CUSTOM PACKER DETECTED ({srr.CustomPackerDetected})");
+
+                GUIHelper.ShowWarning(this, packerWarning);
+            }
             ImportedArchiveFiles = new HashSet<string>(srr.ArchivedFiles, StringComparer.OrdinalIgnoreCase);
             ImportedArchiveDirectories = new HashSet<string>(srr.ArchivedDirectories, StringComparer.OrdinalIgnoreCase);
             ImportedDirectoryTimestamps = new Dictionary<string, DateTime>(srr.ArchivedDirectoryTimestamps, StringComparer.OrdinalIgnoreCase);
@@ -490,6 +521,20 @@ public partial class SettingsOptionsForm : Form
             DetectedCmtFileTime = srr.CmtFileTimeDOS;
             DetectedCmtFileAttributes = srr.CmtFileAttributes;
 
+            // Store LARGE flag detection from SRR
+            DetectedLargeFlag = srr.HasLargeFiles;
+            DetectedHighPackSize = srr.DetectedHighPackSize;
+            DetectedHighUnpSize = srr.DetectedHighUnpSize;
+
+            if (srr.HasLargeFiles == true)
+            {
+                cbEnableHostOSPatching.Checked = true;
+                importedSettings.Add($"LARGE flag: Yes (HIGH_PACK=0x{srr.DetectedHighPackSize ?? 0:X8}, HIGH_UNP=0x{srr.DetectedHighUnpSize ?? 0:X8})");
+                importedSettings.Add("→ Header patching enabled (LARGE flag must be patched)");
+                Log.Information(this, $"LARGE flag detected in file headers (HIGH_PACK=0x{srr.DetectedHighPackSize ?? 0:X8}, HIGH_UNP=0x{srr.DetectedHighUnpSize ?? 0:X8})", LogTarget.System);
+                Log.Information(this, "Header patching enabled (LARGE flag detected)", LogTarget.System);
+            }
+
             // Display detected Host OS from file headers
             if (srr.DetectedHostOS.HasValue)
             {
@@ -519,7 +564,7 @@ public partial class SettingsOptionsForm : Form
             }
 
             // Update the UI to show detected values
-            UpdateHostOSDetectedLabel();
+            UpdatePatchDetailsLabel();
 
             // Display CMT (comment service block) specific metadata
             if (srr.CmtHostOS.HasValue)
@@ -686,12 +731,18 @@ public partial class SettingsOptionsForm : Form
                     importedSettings.Add("Archive format: RAR4 (-ma4)");
                     Log.Information(this, $"Archive format: RAR4 (-ma4) based on UnpVer={srr.RARVersion.Value}", LogTarget.System);
                 }
-                else
+                else if (srr.RARVersion.Value < 70)
                 {
                     // RAR5 format
                     cbSwitchMA5.Checked = true;
                     importedSettings.Add("Archive format: RAR5 (-ma5)");
                     Log.Information(this, $"Archive format: RAR5 (-ma5) based on UnpVer={srr.RARVersion.Value}", LogTarget.System);
+                }
+                else
+                {
+                    // RAR7 format — no -ma flag needed (RAR 7.x only creates RAR7)
+                    importedSettings.Add("Archive format: RAR7 (native)");
+                    Log.Information(this, $"Archive format: RAR7 based on UnpVer={srr.RARVersion.Value}", LogTarget.System);
                 }
             }
 
@@ -779,6 +830,7 @@ public partial class SettingsOptionsForm : Form
                 cbRARVersion4.Checked = false;
                 cbRARVersion5.Checked = false;
                 cbRARVersion6.Checked = false;
+                cbRARVersion7.Checked = false;
 
                 List<string> indicators = [];
 
@@ -795,10 +847,10 @@ public partial class SettingsOptionsForm : Form
                 }
                 else if (unpVer >= 70)
                 {
-                    cbRARVersion6.Checked = true;
+                    cbRARVersion7.Checked = true;
                     importedSettings.Add($"✓ RAR 7.0+ Format (UNP_VER={unpVer})");
-                    importedSettings.Add("Selected: RAR 6.x+");
-                    Log.Information(this, "  RAR 7.0+ format detected -> testing RAR 6.x+", LogTarget.System);
+                    importedSettings.Add("Selected: RAR 7.x");
+                    Log.Information(this, "  RAR 7.0+ format detected -> testing RAR 7.x", LogTarget.System);
                 }
                 // Check for large dictionaries (RAR 5.0+ exclusive)
                 else if (srr.DictionarySize.HasValue && srr.DictionarySize.Value > 4096)
@@ -884,6 +936,7 @@ public partial class SettingsOptionsForm : Form
                         cbRARVersion4.Checked = true;
                         cbRARVersion5.Checked = true;
                         cbRARVersion6.Checked = true;
+                        cbRARVersion7.Checked = true;
                         importedSettings.Add($"⚠ Uncertain version (UNP_VER={unpVer})");
                         importedSettings.Add("Selected: All versions (broad search)");
                         Log.Warning(this, $"  Uncertain version -> testing all RAR versions", LogTarget.System);
@@ -1035,6 +1088,11 @@ public partial class SettingsOptionsForm : Form
             rarVersions.Add(new(600, 700));
         }
 
+        if (cbRARVersion7.Checked)
+        {
+            rarVersions.Add(new(700, 800));
+        }
+
         return new()
         {
             SetFileArchiveAttribute = cbFileA.CheckState,
@@ -1064,6 +1122,10 @@ public partial class SettingsOptionsForm : Form
             DetectedCmtHostOS = DetectedCmtHostOS,
             DetectedCmtFileTime = DetectedCmtFileTime,
             DetectedCmtFileAttributes = DetectedCmtFileAttributes,
+            // LARGE flag patching
+            DetectedLargeFlag = DetectedLargeFlag,
+            DetectedHighPackSize = DetectedHighPackSize,
+            DetectedHighUnpSize = DetectedHighUnpSize,
             // Volume naming
             UseOldVolumeNaming = cbUseOldVolumeNaming.Checked,
             CompleteAllVolumes = cbCompleteAllVolumes.Checked,
@@ -1072,8 +1134,19 @@ public partial class SettingsOptionsForm : Form
         };
     }
 
-    private void UpdateHostOSDetectedLabel()
+    private void UpdatePatchDetailsLabel()
     {
+        bool hasAnyDetection = DetectedFileHostOS.HasValue || DetectedLargeFlag.HasValue;
+
+        if (!hasAnyDetection)
+        {
+            lblPatchDetails.Text = "";
+            lblHostOSInfo.Text = "Import an SRR to detect header fields for patching";
+            return;
+        }
+
+        List<string> lines = [];
+
         if (DetectedFileHostOS.HasValue)
         {
             string osName = DetectedFileHostOS switch
@@ -1086,14 +1159,32 @@ public partial class SettingsOptionsForm : Form
                 5 => "BeOS",
                 _ => $"Unknown ({DetectedFileHostOS})"
             };
-            lblHostOSDetected.Text = $"Detected: {osName} (0x{DetectedFileHostOS:X2})";
-            lblHostOSInfo.Text = $"Attrs: 0x{DetectedFileAttributes ?? 0:X8}";
+            lines.Add($"Host OS: {osName} (0x{DetectedFileHostOS:X2})");
+            lines.Add($"Attrs: 0x{DetectedFileAttributes ?? 0:X8}");
         }
-        else
+
+        if (DetectedLargeFlag == true)
         {
-            lblHostOSDetected.Text = "";
-            lblHostOSInfo.Text = "Import an SRR to detect Host OS and attributes";
+            lines.Add($"LARGE: Yes (HIGH_PACK=0x{DetectedHighPackSize ?? 0:X8})");
         }
+
+        if (DetectedCmtHostOS.HasValue)
+        {
+            string cmtOsName = DetectedCmtHostOS switch
+            {
+                0 => "MS-DOS",
+                1 => "OS/2",
+                2 => "Windows",
+                3 => "Unix",
+                4 => "Mac OS",
+                5 => "BeOS",
+                _ => $"Unknown ({DetectedCmtHostOS})"
+            };
+            lines.Add($"CMT OS: {cmtOsName}, Time: 0x{DetectedCmtFileTime ?? 0:X8}");
+        }
+
+        lblPatchDetails.Text = string.Join(Environment.NewLine, lines);
+        lblHostOSInfo.Text = "These fields will be patched after RAR creation";
     }
 
     private static void SetTimestampPrecisionCheckboxes(TimestampPrecision precision,
@@ -1118,46 +1209,46 @@ public partial class SettingsOptionsForm : Form
         AddSwitch(compressionLevels, cbSwitchM5, new("-m5", 200));
 
         List<RARCommandLineArgument> archivingFormats = [];
-        AddSwitch(archivingFormats, cbSwitchMA4, new("-ma4", 500));
-        AddSwitch(archivingFormats, cbSwitchMA5, new("-ma5", 500));
+        AddSwitch(archivingFormats, cbSwitchMA4, new("-ma4", 500, 699));
+        AddSwitch(archivingFormats, cbSwitchMA5, new("-ma5", 500, 699));
 
         // Dictionary sizes - use 'k' suffix for RAR 3.x-4.x compatibility (works across all versions)
         // RAR 2.x uses no suffix, RAR 3.x-4.x prefer 'k' suffix, RAR 5.x+ accepts both
         List<RARCommandLineArgument> dictionarySizes = [];
         AddSwitch(dictionarySizes, cbSwitchMD64K, new("-md64k", 200, RARArchiveVersion.RAR4));
-        AddSwitch(dictionarySizes, cbSwitchMD128K, new("-md128k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD256K, new("-md256k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD512K, new("-md512k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD1024K, new("-md1024k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD2048K, new("-md2048k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD4096K, new("-md4096k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD8M, new("-md8m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD16M, new("-md16m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD32M, new("-md32m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD64M, new("-md64m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD128M, new("-md128m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD256M, new("-md256m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD512M, new("-md512m", 500, RARArchiveVersion.RAR5));
-        AddSwitch(dictionarySizes, cbSwitchMD1G, new("-md1g", 500, RARArchiveVersion.RAR5));
+        AddSwitch(dictionarySizes, cbSwitchMD128K, new("-md128k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD256K, new("-md256k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD512K, new("-md512k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD1024K, new("-md1024k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD2048K, new("-md2048k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD4096K, new("-md4096k", 200, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD8M, new("-md8m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD16M, new("-md16m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD32M, new("-md32m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD64M, new("-md64m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD128M, new("-md128m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD256M, new("-md256m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD512M, new("-md512m", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(dictionarySizes, cbSwitchMD1G, new("-md1g", 500, RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
 
         // Timestamp options: Note that RAR 6.x doesn't honor -tsc0/-tsa0 for RAR4 format (handled in Manager.cs)
         List<RARCommandLineArgument> modificationTimes = [];
-        AddSwitch(modificationTimes, cbSwitchTSM0, new("-tsm0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(modificationTimes, cbSwitchTSM1, new("-tsm1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+        AddSwitch(modificationTimes, cbSwitchTSM0, new("-tsm0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(modificationTimes, cbSwitchTSM1, new("-tsm1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
         AddSwitch(modificationTimes, cbSwitchTSM2, new("-tsm2", 320, RARArchiveVersion.RAR4));
         AddSwitch(modificationTimes, cbSwitchTSM3, new("-tsm3", 320, RARArchiveVersion.RAR4));
         AddSwitch(modificationTimes, cbSwitchTSM4, new("-tsm4", 320, RARArchiveVersion.RAR4));
 
         List<RARCommandLineArgument> creationTimes = [];
-        AddSwitch(creationTimes, cbSwitchTSC0, new("-tsc0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(creationTimes, cbSwitchTSC1, new("-tsc1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+        AddSwitch(creationTimes, cbSwitchTSC0, new("-tsc0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(creationTimes, cbSwitchTSC1, new("-tsc1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
         AddSwitch(creationTimes, cbSwitchTSC2, new("-tsc2", 320, RARArchiveVersion.RAR4));
         AddSwitch(creationTimes, cbSwitchTSC3, new("-tsc3", 320, RARArchiveVersion.RAR4));
         AddSwitch(creationTimes, cbSwitchTSC4, new("-tsc4", 320, RARArchiveVersion.RAR4));
 
         List<RARCommandLineArgument> accessTimes = [];
-        AddSwitch(accessTimes, cbSwitchTSA0, new("-tsa0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
-        AddSwitch(accessTimes, cbSwitchTSA1, new("-tsa1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5));
+        AddSwitch(accessTimes, cbSwitchTSA0, new("-tsa0", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
+        AddSwitch(accessTimes, cbSwitchTSA1, new("-tsa1", 320, RARArchiveVersion.RAR4 | RARArchiveVersion.RAR5 | RARArchiveVersion.RAR7));
         AddSwitch(accessTimes, cbSwitchTSA2, new("-tsa2", 320, RARArchiveVersion.RAR4));
         AddSwitch(accessTimes, cbSwitchTSA3, new("-tsa3", 320, RARArchiveVersion.RAR4));
         AddSwitch(accessTimes, cbSwitchTSA4, new("-tsa4", 320, RARArchiveVersion.RAR4));
@@ -1321,7 +1412,7 @@ public partial class SettingsOptionsForm : Form
                                             // Only add if old naming is requested (detected from SRR or user selected)
                                             if (cbUseOldVolumeNaming.Checked)
                                             {
-                                                switches.Add(new("-vn", 300)); // -vn available since RAR 3.00
+                                                switches.Add(new("-vn", 300, 699)); // -vn available since RAR 3.00, removed in RAR 7.x
                                             }
                                         }
 

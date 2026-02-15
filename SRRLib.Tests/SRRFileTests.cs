@@ -732,4 +732,144 @@ public class SRRFileTests : IDisposable
     }
 
     #endregion
+
+    #region Custom Packer Detection Tests
+
+    [Fact]
+    public void Load_NormalFileHeaders_NoCustomPackerDetected()
+    {
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeader("video.avi", packedSize: 1024, unpackedSize: 1024);
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "normal.srr");
+
+        var srr = SRRFile.Load(path);
+
+        Assert.False(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.None, srr.CustomPackerDetected);
+    }
+
+    [Fact]
+    public void Load_AllOnesUnpackedSize_DetectsCustomPacker()
+    {
+        // Sentinel 1: unpacked_size = 0xFFFFFFFFFFFFFFFF (RELOADED/HI2U/0x0007/0x0815 style)
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeaderWithLargeSize("video.avi",
+                    packedSizeLow: 0xFFFFFFFF, packedSizeHigh: 0xFFFFFFFF,
+                    unpackedSizeLow: 0xFFFFFFFF, unpackedSizeHigh: 0xFFFFFFFF);
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "reloaded_style.srr");
+
+        var srr = SRRFile.Load(path);
+
+        Assert.True(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.AllOnesWithLargeFlag, srr.CustomPackerDetected);
+    }
+
+    [Fact]
+    public void Load_MaxUint32WithoutLargeFlag_DetectsCustomPacker()
+    {
+        // Sentinel 2: unpacked_size = 0xFFFFFFFF without LARGE flag (QCF style)
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeader("video.avi",
+                    packedSize: 1024,
+                    unpackedSize: 0xFFFFFFFF,
+                    extraFlags: RARFileFlags.ExtTime); // No LARGE flag
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "qcf_style.srr");
+
+        var srr = SRRFile.Load(path);
+
+        Assert.True(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.MaxUint32WithoutLargeFlag, srr.CustomPackerDetected);
+    }
+
+    [Fact]
+    public void Load_LargeFileWithHighUnpSizeZero_NoFalsePositive()
+    {
+        // Legitimate large file: UnpackedSize = 0xFFFFFFFF but LARGE flag set with HIGH_UNP = 0
+        // This is a valid ~4GB file, NOT a custom packer sentinel
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeaderWithLargeSize("video.avi",
+                    packedSizeLow: 0xFFFFFFFF, packedSizeHigh: 0,
+                    unpackedSizeLow: 0xFFFFFFFF, unpackedSizeHigh: 0);
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "large_legit.srr");
+
+        var srr = SRRFile.Load(path);
+
+        // Combined UnpackedSize = 0x00000000FFFFFFFF, not 0xFFFFFFFFFFFFFFFF
+        Assert.False(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.None, srr.CustomPackerDetected);
+    }
+
+    [Fact]
+    public void Load_SecondFileHasSentinel_StillDetected()
+    {
+        // Detection should trigger even if only the second file header has the sentinel
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeader("readme.nfo", packedSize: 100, unpackedSize: 100);
+                h.AddFileHeaderWithLargeSize("video.avi",
+                    packedSizeLow: 0xFFFFFFFF, packedSizeHigh: 0xFFFFFFFF,
+                    unpackedSizeLow: 0xFFFFFFFF, unpackedSizeHigh: 0xFFFFFFFF);
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "second_sentinel.srr");
+
+        var srr = SRRFile.Load(path);
+
+        Assert.True(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.AllOnesWithLargeFlag, srr.CustomPackerDetected);
+    }
+
+    [Fact]
+    public void Load_DirectoryWithMaxSize_NotDetected()
+    {
+        // Directory entries should not trigger detection (directories often have size=0 or garbage)
+        string path = new SRRTestDataBuilder()
+            .AddSrrHeader()
+            .AddRarFileWithHeaders("release.rar", h =>
+            {
+                h.AddArchiveHeader(RARArchiveFlags.Volume);
+                h.AddFileHeader("subdir",
+                    packedSize: 0,
+                    unpackedSize: 0xFFFFFFFF,
+                    extraFlags: RARFileFlags.ExtTime,
+                    isDirectory: true);
+                h.AddFileHeader("subdir\\video.avi", packedSize: 1024, unpackedSize: 1024);
+                h.AddEndArchive();
+            })
+            .BuildToFile(_testDir, "dir_maxsize.srr");
+
+        var srr = SRRFile.Load(path);
+
+        Assert.False(srr.HasCustomPackerHeaders);
+        Assert.Equal(CustomPackerType.None, srr.CustomPackerDetected);
+    }
+
+    #endregion
 }

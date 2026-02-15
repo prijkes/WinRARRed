@@ -310,6 +310,289 @@ public class RARPatcherTests : IDisposable
 
     #endregion
 
+    #region PatchLargeFlags Tests
+
+    /// <summary>
+    /// Builds a minimal RAR4 file with a single file header for LARGE flag testing.
+    /// </summary>
+    /// <param name="hasLargeFlag">If true, include LARGE flag and HIGH fields in the file header.</param>
+    /// <param name="highPackSize">HIGH_PACK_SIZE value (only used if hasLargeFlag is true).</param>
+    /// <param name="highUnpSize">HIGH_UNP_SIZE value (only used if hasLargeFlag is true).</param>
+    private static byte[] BuildMinimalRar4WithFileHeader(bool hasLargeFlag, uint highPackSize = 0, uint highUnpSize = 0)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+
+        // RAR4 marker (7 bytes)
+        writer.Write(new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00 });
+
+        // Archive header (7 bytes, minimal)
+        byte[] archiveHeader = new byte[7];
+        archiveHeader[2] = 0x73; // type = ArchiveHeader
+        BitConverter.GetBytes((ushort)0x0000).CopyTo(archiveHeader, 3); // flags
+        BitConverter.GetBytes((ushort)7).CopyTo(archiveHeader, 5); // headerSize = 7
+        // Compute CRC
+        uint archCrc = Crc32Algorithm.Compute(archiveHeader, 2, 5);
+        BitConverter.GetBytes((ushort)(archCrc & 0xFFFF)).CopyTo(archiveHeader, 0);
+        writer.Write(archiveHeader);
+
+        // File header
+        // Base: 7 bytes (CRC+type+flags+headerSize) + 4 (ADD_SIZE) + 4 (UnpSize) + 1 (HostOS) + 4 (FileCRC) + 4 (FileTime) + 1 (UnpVer) + 1 (Method) + 2 (NameSize) + 4 (Attr)
+        // = 32 bytes + optionally 8 bytes (HIGH_PACK_SIZE + HIGH_UNP_SIZE) + filename
+        string fileName = "test.txt";
+        byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(fileName);
+        int headerSize = 32 + (hasLargeFlag ? 8 : 0) + nameBytes.Length;
+        ushort flags = (ushort)(RARFileFlags.LongBlock | (hasLargeFlag ? RARFileFlags.Large : 0));
+
+        byte[] fileHeader = new byte[headerSize];
+        fileHeader[2] = 0x74; // type = FileHeader
+        BitConverter.GetBytes(flags).CopyTo(fileHeader, 3);
+        BitConverter.GetBytes((ushort)headerSize).CopyTo(fileHeader, 5);
+        BitConverter.GetBytes((uint)0).CopyTo(fileHeader, 7); // ADD_SIZE (packed data size = 0)
+        BitConverter.GetBytes((uint)100).CopyTo(fileHeader, 11); // UnpSize
+        fileHeader[15] = 2; // HostOS = Windows
+        BitConverter.GetBytes((uint)0xDEADBEEF).CopyTo(fileHeader, 16); // FileCRC
+        BitConverter.GetBytes((uint)0x5A000000).CopyTo(fileHeader, 20); // FileTime
+        fileHeader[24] = 29; // UnpVer
+        fileHeader[25] = 0x33; // Method (Normal)
+        BitConverter.GetBytes((ushort)nameBytes.Length).CopyTo(fileHeader, 26);
+        BitConverter.GetBytes((uint)0x00000020).CopyTo(fileHeader, 28); // Attributes
+
+        int offset = 32;
+        if (hasLargeFlag)
+        {
+            BitConverter.GetBytes(highPackSize).CopyTo(fileHeader, offset);
+            offset += 4;
+            BitConverter.GetBytes(highUnpSize).CopyTo(fileHeader, offset);
+            offset += 4;
+        }
+        Array.Copy(nameBytes, 0, fileHeader, offset, nameBytes.Length);
+
+        // Compute CRC
+        uint fileCrc32 = Crc32Algorithm.Compute(fileHeader, 2, fileHeader.Length - 2);
+        BitConverter.GetBytes((ushort)(fileCrc32 & 0xFFFF)).CopyTo(fileHeader, 0);
+        writer.Write(fileHeader);
+
+        // End of Archive block
+        byte[] endBlock = new byte[7];
+        endBlock[2] = 0x7B; // type = EndArchive
+        BitConverter.GetBytes((ushort)0x4000).CopyTo(endBlock, 3); // SKIP_IF_UNKNOWN
+        BitConverter.GetBytes((ushort)7).CopyTo(endBlock, 5); // headerSize = 7
+        uint endCrc = Crc32Algorithm.Compute(endBlock, 2, 5);
+        BitConverter.GetBytes((ushort)(endCrc & 0xFFFF)).CopyTo(endBlock, 0);
+        writer.Write(endBlock);
+
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public void PatchLargeFlags_AddLarge_InsertsHighFields()
+    {
+        byte[] rarData = BuildMinimalRar4WithFileHeader(hasLargeFlag: false);
+        int originalLength = rarData.Length;
+
+        using var stream = new MemoryStream();
+        stream.Write(rarData, 0, rarData.Length);
+        stream.Position = 0;
+
+        var options = new PatchOptions
+        {
+            SetLargeFlag = true,
+            HighPackSize = 0x12345678,
+            HighUnpSize = 0xABCDEF00
+        };
+
+        bool modified = RARPatcher.PatchLargeFlags(stream, options);
+
+        Assert.True(modified);
+        // File should be 8 bytes larger
+        Assert.Equal(originalLength + 8, stream.Length);
+
+        // Verify the patched file is parseable and has LARGE flag
+        stream.Position = 7; // Skip marker
+        var reader = new RARHeaderReader(stream);
+
+        // Skip archive header
+        var archBlock = reader.ReadBlock(parseContents: false);
+        Assert.NotNull(archBlock);
+        reader.SkipBlock(archBlock!);
+
+        // Read file header
+        var fileBlock = reader.ReadBlock(parseContents: true);
+        Assert.NotNull(fileBlock);
+        Assert.NotNull(fileBlock!.FileHeader);
+        Assert.True(fileBlock.FileHeader!.HasLargeSize);
+        Assert.Equal(0x12345678u, fileBlock.FileHeader.HighPackSize);
+        Assert.Equal(0xABCDEF00u, fileBlock.FileHeader.HighUnpSize);
+        Assert.True(fileBlock.CrcValid);
+    }
+
+    [Fact]
+    public void PatchLargeFlags_RemoveLarge_RemovesHighFields()
+    {
+        byte[] rarData = BuildMinimalRar4WithFileHeader(hasLargeFlag: true, highPackSize: 0x11111111, highUnpSize: 0x22222222);
+        int originalLength = rarData.Length;
+
+        using var stream = new MemoryStream();
+        stream.Write(rarData, 0, rarData.Length);
+        stream.Position = 0;
+
+        var options = new PatchOptions
+        {
+            SetLargeFlag = false
+        };
+
+        bool modified = RARPatcher.PatchLargeFlags(stream, options);
+
+        Assert.True(modified);
+        // File should be 8 bytes smaller
+        Assert.Equal(originalLength - 8, stream.Length);
+
+        // Verify the patched file is parseable and does NOT have LARGE flag
+        stream.Position = 7;
+        var reader = new RARHeaderReader(stream);
+
+        var archBlock = reader.ReadBlock(parseContents: false);
+        Assert.NotNull(archBlock);
+        reader.SkipBlock(archBlock!);
+
+        var fileBlock = reader.ReadBlock(parseContents: true);
+        Assert.NotNull(fileBlock);
+        Assert.NotNull(fileBlock!.FileHeader);
+        Assert.False(fileBlock.FileHeader!.HasLargeSize);
+        Assert.Equal(0u, fileBlock.FileHeader.HighPackSize);
+        Assert.Equal(0u, fileBlock.FileHeader.HighUnpSize);
+        Assert.True(fileBlock.CrcValid);
+    }
+
+    [Fact]
+    public void PatchLargeFlags_RoundTrip_AddThenRemoveRestoresOriginal()
+    {
+        byte[] originalData = BuildMinimalRar4WithFileHeader(hasLargeFlag: false);
+
+        // Add LARGE
+        using var stream = new MemoryStream();
+        stream.Write(originalData, 0, originalData.Length);
+        stream.Position = 0;
+
+        var addOptions = new PatchOptions
+        {
+            SetLargeFlag = true,
+            HighPackSize = 0,
+            HighUnpSize = 0
+        };
+
+        bool addModified = RARPatcher.PatchLargeFlags(stream, addOptions);
+        Assert.True(addModified);
+
+        // Remove LARGE
+        stream.Position = 0;
+        var removeOptions = new PatchOptions
+        {
+            SetLargeFlag = false
+        };
+
+        bool removeModified = RARPatcher.PatchLargeFlags(stream, removeOptions);
+        Assert.True(removeModified);
+
+        // Result should match original length
+        Assert.Equal(originalData.Length, stream.Length);
+
+        // Verify the file is parseable
+        stream.Position = 7;
+        var reader = new RARHeaderReader(stream);
+
+        var archBlock = reader.ReadBlock(parseContents: false);
+        Assert.NotNull(archBlock);
+        reader.SkipBlock(archBlock!);
+
+        var fileBlock = reader.ReadBlock(parseContents: true);
+        Assert.NotNull(fileBlock);
+        Assert.True(fileBlock!.CrcValid);
+        Assert.False(fileBlock.FileHeader!.HasLargeSize);
+    }
+
+    [Fact]
+    public void PatchLargeFlags_AlreadyMatches_ReturnsNoModification()
+    {
+        byte[] rarData = BuildMinimalRar4WithFileHeader(hasLargeFlag: true, highPackSize: 0, highUnpSize: 0);
+
+        using var stream = new MemoryStream();
+        stream.Write(rarData, 0, rarData.Length);
+        stream.Position = 0;
+
+        var options = new PatchOptions
+        {
+            SetLargeFlag = true // Already has LARGE
+        };
+
+        bool modified = RARPatcher.PatchLargeFlags(stream, options);
+
+        Assert.False(modified);
+    }
+
+    [Fact]
+    public void PatchLargeFlags_NullSetLargeFlag_ReturnsNoModification()
+    {
+        byte[] rarData = BuildMinimalRar4WithFileHeader(hasLargeFlag: false);
+
+        using var stream = new MemoryStream();
+        stream.Write(rarData, 0, rarData.Length);
+        stream.Position = 0;
+
+        var options = new PatchOptions
+        {
+            SetLargeFlag = null // No change requested
+        };
+
+        bool modified = RARPatcher.PatchLargeFlags(stream, options);
+
+        Assert.False(modified);
+    }
+
+    [Fact]
+    public void PatchLargeFlags_WithRealFile_PreservesParseability()
+    {
+        string testFile = CopyTestFile("test_wrar40_m3.rar");
+
+        // Add LARGE flag to a real RAR file
+        using var stream = new FileStream(testFile, FileMode.Open, FileAccess.ReadWrite);
+
+        var options = new PatchOptions
+        {
+            SetLargeFlag = true,
+            HighPackSize = 0,
+            HighUnpSize = 0
+        };
+
+        bool modified = RARPatcher.PatchLargeFlags(stream, options);
+        Assert.True(modified);
+
+        // Verify all blocks are parseable with valid CRCs
+        stream.Position = 7;
+        var reader = new RARHeaderReader(stream);
+
+        while (stream.Position < stream.Length)
+        {
+            var block = reader.ReadBlock(parseContents: true);
+            if (block == null) break;
+
+            if (block.BlockType == RAR4BlockType.FileHeader || block.BlockType == RAR4BlockType.Service)
+            {
+                Assert.True(block.CrcValid, $"CRC invalid after LARGE patching at position {block.BlockPosition}");
+
+                if (block.FileHeader != null)
+                {
+                    Assert.True(block.FileHeader.HasLargeSize);
+                }
+            }
+
+            reader.SkipBlock(block, includeData: block.BlockType != RAR4BlockType.FileHeader);
+        }
+    }
+
+    #endregion
+
     #region PatchStream Tests
 
     [Fact]

@@ -60,7 +60,6 @@ public partial class MainForm : Form
         logFlushTimer.Start();
 
         tsmiFileExit.Click += TsmiFileExit_Click;
-        tsmiViewCommandLines.Click += TsmiViewCommandLines_Click;
         tsmiSettingsOptions.Click += TsmiSettingsOptions_Click;
 
         btnWinRARDirectoryBrowse.Click += BtnWinRARDirectoryBrowse_Click;
@@ -77,18 +76,6 @@ public partial class MainForm : Form
     private void TsmiFileExit_Click(object? sender, EventArgs e)
     {
         Close();
-    }
-
-    private void TsmiViewCommandLines_Click(object? sender, EventArgs e)
-    {
-        if (Manager == null || Manager.BruteForceOptions == null)
-        {
-            GUIHelper.ShowError(this, "No brute force has been started yet.");
-            return;
-        }
-
-        ViewCommandLinesForm form = new(Manager.BruteForceOptions);
-        form.Show(this);
     }
 
     private void TsmiSettingsOptions_Click(object? sender, EventArgs e)

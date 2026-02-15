@@ -31,8 +31,6 @@ partial class MainForm
         menuStrip1 = new System.Windows.Forms.MenuStrip();
         tsmiFile = new System.Windows.Forms.ToolStripMenuItem();
         tsmiFileExit = new System.Windows.Forms.ToolStripMenuItem();
-        tsmiView = new System.Windows.Forms.ToolStripMenuItem();
-        tsmiViewCommandLines = new System.Windows.Forms.ToolStripMenuItem();
         tsmiTools = new System.Windows.Forms.ToolStripMenuItem();
         tsmiToolsFileInspector = new System.Windows.Forms.ToolStripMenuItem();
         tsmiToolsFileCompare = new System.Windows.Forms.ToolStripMenuItem();
@@ -60,6 +58,7 @@ partial class MainForm
         btnReleaseDirectoryBrowse = new System.Windows.Forms.Button();
         tbReleaseDirectory = new System.Windows.Forms.TextBox();
         groupBox3 = new System.Windows.Forms.GroupBox();
+        lblOutputWarning = new System.Windows.Forms.Label();
         btnTemporaryDirectoryBrowse = new System.Windows.Forms.Button();
         tbOutputDirectory = new System.Windows.Forms.TextBox();
         label4 = new System.Windows.Forms.Label();
@@ -91,7 +90,7 @@ partial class MainForm
         // 
         // menuStrip1
         // 
-        menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiFile, tsmiView, tsmiTools, tsmiSettings });
+        menuStrip1.Items.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiFile, tsmiTools, tsmiSettings });
         menuStrip1.Location = new System.Drawing.Point(0, 0);
         menuStrip1.Name = "menuStrip1";
         menuStrip1.Size = new System.Drawing.Size(1488, 24);
@@ -110,19 +109,6 @@ partial class MainForm
         tsmiFileExit.Name = "tsmiFileExit";
         tsmiFileExit.Size = new System.Drawing.Size(93, 22);
         tsmiFileExit.Text = "E&xit";
-        // 
-        // tsmiView
-        // 
-        tsmiView.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] { tsmiViewCommandLines });
-        tsmiView.Name = "tsmiView";
-        tsmiView.Size = new System.Drawing.Size(44, 20);
-        tsmiView.Text = "&View";
-        // 
-        // tsmiViewCommandLines
-        // 
-        tsmiViewCommandLines.Name = "tsmiViewCommandLines";
-        tsmiViewCommandLines.Size = new System.Drawing.Size(161, 22);
-        tsmiViewCommandLines.Text = "&Command Lines";
         // 
         // tsmiTools
         // 
@@ -206,7 +192,7 @@ partial class MainForm
         gbInput.Controls.Add(btnStart);
         gbInput.Location = new System.Drawing.Point(0, 27);
         gbInput.Name = "gbInput";
-        gbInput.Size = new System.Drawing.Size(759, 406);
+        gbInput.Size = new System.Drawing.Size(759, 421);
         gbInput.TabIndex = 24;
         gbInput.TabStop = false;
         gbInput.Text = "Input";
@@ -371,15 +357,26 @@ partial class MainForm
         // groupBox3
         // 
         groupBox3.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+        groupBox3.Controls.Add(lblOutputWarning);
         groupBox3.Controls.Add(btnTemporaryDirectoryBrowse);
         groupBox3.Controls.Add(tbOutputDirectory);
         groupBox3.Controls.Add(label4);
         groupBox3.Location = new System.Drawing.Point(6, 255);
         groupBox3.Name = "groupBox3";
-        groupBox3.Size = new System.Drawing.Size(747, 72);
+        groupBox3.Size = new System.Drawing.Size(747, 87);
         groupBox3.TabIndex = 4;
         groupBox3.TabStop = false;
         groupBox3.Text = "4. Output Directory";
+        // 
+        // lblOutputWarning
+        // 
+        lblOutputWarning.AutoSize = true;
+        lblOutputWarning.ForeColor = System.Drawing.Color.FromArgb(200, 40, 40);
+        lblOutputWarning.Location = new System.Drawing.Point(6, 59);
+        lblOutputWarning.Name = "lblOutputWarning";
+        lblOutputWarning.Size = new System.Drawing.Size(394, 15);
+        lblOutputWarning.TabIndex = 9;
+        lblOutputWarning.Text = "WARNING: All existing data in this directory will be deleted when starting!";
         // 
         // btnTemporaryDirectoryBrowse
         // 
@@ -412,7 +409,7 @@ partial class MainForm
         // btnStart
         // 
         btnStart.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right;
-        btnStart.Location = new System.Drawing.Point(667, 333);
+        btnStart.Location = new System.Drawing.Point(667, 348);
         btnStart.Name = "btnStart";
         btnStart.Size = new System.Drawing.Size(86, 28);
         btnStart.TabIndex = 3;
@@ -425,10 +422,10 @@ partial class MainForm
         groupBox11.Controls.Add(cbAutoScroll);
         groupBox11.Controls.Add(tabControlLogs);
         groupBox11.Controls.Add(btnClearLog);
-        groupBox11.Location = new System.Drawing.Point(6, 436);
+        groupBox11.Location = new System.Drawing.Point(6, 451);
         groupBox11.Margin = new System.Windows.Forms.Padding(0);
         groupBox11.Name = "groupBox11";
-        groupBox11.Size = new System.Drawing.Size(1473, 348);
+        groupBox11.Size = new System.Drawing.Size(1473, 333);
         groupBox11.TabIndex = 23;
         groupBox11.TabStop = false;
         groupBox11.Text = "Log";
@@ -454,7 +451,7 @@ partial class MainForm
         tabControlLogs.Location = new System.Drawing.Point(6, 44);
         tabControlLogs.Name = "tabControlLogs";
         tabControlLogs.SelectedIndex = 0;
-        tabControlLogs.Size = new System.Drawing.Size(1461, 298);
+        tabControlLogs.Size = new System.Drawing.Size(1461, 283);
         tabControlLogs.TabIndex = 0;
         // 
         // tabPageSystem
@@ -463,7 +460,7 @@ partial class MainForm
         tabPageSystem.Location = new System.Drawing.Point(4, 24);
         tabPageSystem.Name = "tabPageSystem";
         tabPageSystem.Padding = new System.Windows.Forms.Padding(3);
-        tabPageSystem.Size = new System.Drawing.Size(1453, 270);
+        tabPageSystem.Size = new System.Drawing.Size(1453, 255);
         tabPageSystem.TabIndex = 0;
         tabPageSystem.Text = "System";
         tabPageSystem.UseVisualStyleBackColor = true;
@@ -477,7 +474,7 @@ partial class MainForm
         rtbLogSystem.Location = new System.Drawing.Point(3, 3);
         rtbLogSystem.Name = "rtbLogSystem";
         rtbLogSystem.ReadOnly = true;
-        rtbLogSystem.Size = new System.Drawing.Size(1447, 264);
+        rtbLogSystem.Size = new System.Drawing.Size(1447, 249);
         rtbLogSystem.TabIndex = 0;
         rtbLogSystem.Text = "";
         rtbLogSystem.WordWrap = false;
@@ -535,7 +532,7 @@ partial class MainForm
         // btnClearLog
         // 
         btnClearLog.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left;
-        btnClearLog.Location = new System.Drawing.Point(6, 625);
+        btnClearLog.Location = new System.Drawing.Point(6, 610);
         btnClearLog.Name = "btnClearLog";
         btnClearLog.Size = new System.Drawing.Size(75, 23);
         btnClearLog.TabIndex = 19;
@@ -596,8 +593,6 @@ partial class MainForm
         private System.Windows.Forms.ToolStripMenuItem tsmiFileExit;
         private System.Windows.Forms.ToolStripMenuItem tsmiSettings;
         private System.Windows.Forms.ToolStripMenuItem tsmiSettingsOptions;
-        private System.Windows.Forms.ToolStripMenuItem tsmiView;
-        private System.Windows.Forms.ToolStripMenuItem tsmiViewCommandLines;
         private System.Windows.Forms.ToolStripMenuItem tsmiTools;
         private System.Windows.Forms.ToolStripMenuItem tsmiToolsFileInspector;
         private System.Windows.Forms.ToolStripMenuItem tsmiToolsFileCompare;
@@ -625,6 +620,7 @@ partial class MainForm
     private System.Windows.Forms.Button btnTemporaryDirectoryBrowse;
     private System.Windows.Forms.TextBox tbOutputDirectory;
     private System.Windows.Forms.Label label4;
+    private System.Windows.Forms.Label lblOutputWarning;
     private System.Windows.Forms.Button btnStart;
     private System.Windows.Forms.GroupBox groupBox11;
     private System.Windows.Forms.TabControl tabControlLogs;

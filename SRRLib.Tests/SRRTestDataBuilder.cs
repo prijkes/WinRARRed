@@ -261,6 +261,67 @@ internal class RAR4HeaderBuilder
     }
 
     /// <summary>
+    /// Writes a RAR 4.x file header block (0x74) with LARGE flag and 64-bit sizes, for testing custom packer detection.
+    /// </summary>
+    public RAR4HeaderBuilder AddFileHeaderWithLargeSize(
+        string fileName,
+        uint packedSizeLow = 1024,
+        uint packedSizeHigh = 0,
+        uint unpackedSizeLow = 1024,
+        uint unpackedSizeHigh = 0,
+        byte hostOS = 2,
+        uint fileCrc = 0xDEADBEEF,
+        uint fileTimeDOS = 0x5A8E3100,
+        byte unpVer = 29,
+        byte method = 0x33,
+        uint fileAttributes = 0x00000020,
+        RARFileFlags extraFlags = RARFileFlags.ExtTime)
+    {
+        byte[] nameBytes = Encoding.ASCII.GetBytes(fileName);
+        ushort nameSize = (ushort)nameBytes.Length;
+
+        RARFileFlags flags = RARFileFlags.LongBlock | RARFileFlags.Large | extraFlags;
+
+        // Header with LARGE adds HIGH_PACK_SIZE(4) + HIGH_UNP_SIZE(4) = 8 extra bytes
+        int extTimeSize = (extraFlags & RARFileFlags.ExtTime) != 0 ? 2 : 0;
+        ushort headerSize = (ushort)(7 + 25 + 8 + nameSize + extTimeSize);
+
+        byte[] header = new byte[headerSize];
+        header[2] = 0x74; // FileHeader
+        BitConverter.GetBytes((ushort)flags).CopyTo(header, 3);
+        BitConverter.GetBytes(headerSize).CopyTo(header, 5);
+        BitConverter.GetBytes(packedSizeLow).CopyTo(header, 7);     // ADD_SIZE (low packed)
+        BitConverter.GetBytes(unpackedSizeLow).CopyTo(header, 11);  // UNP_SIZE (low unpacked)
+        header[15] = hostOS;
+        BitConverter.GetBytes(fileCrc).CopyTo(header, 16);
+        BitConverter.GetBytes(fileTimeDOS).CopyTo(header, 20);
+        header[24] = unpVer;
+        header[25] = method;
+        BitConverter.GetBytes(nameSize).CopyTo(header, 26);
+        BitConverter.GetBytes(fileAttributes).CopyTo(header, 28);
+        // HIGH_PACK_SIZE at offset 32
+        BitConverter.GetBytes(packedSizeHigh).CopyTo(header, 32);
+        // HIGH_UNP_SIZE at offset 36
+        BitConverter.GetBytes(unpackedSizeHigh).CopyTo(header, 36);
+        // Filename at offset 40
+        nameBytes.CopyTo(header, 40);
+
+        if ((extraFlags & RARFileFlags.ExtTime) != 0)
+        {
+            int extTimeOffset = 40 + nameSize;
+            ushort extFlags = 0x8000;
+            BitConverter.GetBytes(extFlags).CopyTo(header, extTimeOffset);
+        }
+
+        uint crc32 = Crc32Algorithm.Compute(header, 2, header.Length - 2);
+        ushort crc = (ushort)(crc32 & 0xFFFF);
+        BitConverter.GetBytes(crc).CopyTo(header, 0);
+
+        _writer.Write(header);
+        return this;
+    }
+
+    /// <summary>
     /// Writes a RAR 4.x CMT service block (0x7A) with stored comment data and proper CRC.
     /// </summary>
     public RAR4HeaderBuilder AddCmtServiceBlock(
