@@ -55,7 +55,7 @@ Side-by-side comparison of two RAR or SRR files. Parses both files with the deta
   - [Extracted files](https://drive.google.com/file/d/1of053kS2Wxk-foHN_ALRu-u6Tcck58yn/view?usp=drive_link) — pre-extracted `rar.exe` binaries ready to use.
   - [Original files from rar FTP](https://drive.google.com/file/d/1hvgzSY6YH_ZS3cpy7bHcw2zpjiwuP_Xi/view?usp=drive_link) — original installer archives.
 - The release directory with uncompressed files (must be unmodified).
-- A verification file: `.sfv` (CRC32) or `.sha1`.
+- A verification file: `.sfv` (CRC32) or `.sha1`. Not required when importing an SRR file, as it typically contains one.
 
 ## Usage
 
