@@ -1,6 +1,6 @@
 # WinRARRed
 
-WinRARRed is a Windows utility that brute-forces WinRAR command line settings to recreate a bit-perfect RAR archive from its extracted files. It is aimed at preservation workflows where the original archive is missing but the payload files (and a verification hash) are intact.
+WinRARRed is a Windows utility that brute-forces WinRAR command line settings to recreate a bit-perfect RAR archive from its extracted files. It is aimed at preservation workflows where the original archive is missing but the payload files (and a verification hash) are intact. It uses [SRR (Scene Release Reconstruction)](http://rescene.wikidot.com/start) files to prefill archive settings and verify results.
 
 ![main_window](doc/main_window.png)
 
@@ -54,6 +54,7 @@ Side-by-side comparison of two RAR or SRR files. Parses both files with the deta
   The folder name must include version digits (examples: `winrar-x64-400`, `rar-550`, `winrar-x64-700`).
   - [Extracted files](https://drive.google.com/file/d/1of053kS2Wxk-foHN_ALRu-u6Tcck58yn/view?usp=drive_link) — pre-extracted `rar.exe` binaries ready to use.
   - [Original files from rar FTP](https://drive.google.com/file/d/1hvgzSY6YH_ZS3cpy7bHcw2zpjiwuP_Xi/view?usp=drive_link) — original installer archives.
+  - [ReScene wiki: RAR versions](http://rescene.wikidot.com/rar-versions) — version list with download links.
 - The release directory with uncompressed files (must be unmodified).
 - A verification file: `.sfv` (CRC32) or `.sha1`. Not required when importing an SRR file, as it typically contains one.
 
